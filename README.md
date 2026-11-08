@@ -1,8 +1,9 @@
 # Omarchy Control Center
 
 A terminal inventory of everything installed on an Omarchy / Arch Linux system —
-pacman packages, AUR packages and (optionally) flatpak applications and runtimes —
-with lifecycle operations that are safe by construction: every destructive action
+packages, AUR packages, Omarchy shell plugins, flatpak applications, Neovim plugins,
+Zsh plugins, Hyprland configuration, Cargo and Python tools, systemd services, fonts,
+themes and icon themes — with lifecycle operations that are safe by construction: every destructive action
 shows exactly what will run, what else could be affected, what could not be
 determined, and refuses to proceed without the exact name typed back.
 
@@ -17,10 +18,38 @@ unavailable integration instead of an error, and no value is ever invented.
 | Rust 1.88+ (edition 2024) | building | developed against `rustc 1.99.1` |
 | `pacman` | the pacman adapter | read-only queries need no privileges |
 | `yay` or `paru` | the AUR adapter | optional; without one, AUR is reported unavailable |
+| `omarchy` | the plugin adapter | lists, inspects and removes shell plugins |
 | `flatpak` | the flatpak adapter | **optional by design**; the program is fully usable without it |
+| `nvim` + `lazy-lock.json` | the Neovim adapter | reads files only; no command is run |
+| `zsh` + oh-my-zsh | the Zsh adapter | reads `.zshrc` only; it is never modified |
+| `systemctl` | the services adapter | inspection only |
+| `cargo` | the Cargo tools adapter | removal goes through `cargo uninstall` |
+| `uv` or `pipx` | the Python tools adapter | a lazy-install shim is refused, never executed |
+| `fc-list` | the resources adapter | fonts; themes and icons are read from their roots |
 
-Not implemented yet, and reported as such rather than simulated: Lazy.nvim, Zsh,
-Hyprland, Cargo, Python, systemd services, fonts, themes and icons.
+Not implemented, and reported as such rather than simulated: AppImage candidates,
+inventory comparison between runs, and mutation of anything under `~/.config`
+(Hyprland and Zsh are inspected, never edited).
+
+## What it inventories
+
+| Ecosystem | Source of truth | Can remove? |
+| --- | --- | --- |
+| pacman packages | `pacman -Q` / `-Qi` / `-Qm` / `-Qdtq` | yes, official packages only |
+| AUR packages | the pacman foreign set, enriched by `yay -Si` | yes, through the helper |
+| Omarchy shell plugins | `omarchy plugin list --json` | yes, third-party only |
+| flatpak apps and runtimes | `flatpak list` | yes, when flatpak is installed |
+| Neovim plugins | `lazy-lock.json` + `~/.local/share/nvim/lazy` | no — the config still references them |
+| Zsh plugins | `plugins=(...)` in `.zshrc` + oh-my-zsh | no — `.zshrc` is never written |
+| Hyprland configuration | `~/.config/hypr/*.lua` and `*.conf` | no — a reference is not ownership |
+| Cargo tools | `cargo install --list` | yes, through `cargo uninstall` |
+| Python tools | `uv tool list` / `pipx list --json` | no — ownership cannot be proven yet |
+| systemd services | `systemctl list-units` + `list-unit-files` | no — stop, disable and remove are different actions |
+| Fonts, themes, icons | `fc-list` + the theme and icon roots | no — shared resources |
+
+On the machine this was developed on that is 2666 components, 0 failures and 0 duplicate
+identities, including 3 Neovim plugins reported as `missing` because the lock file lists
+them and no directory exists.
 
 ## Build and run
 
@@ -118,6 +147,10 @@ removes or upgrades a package.
 
 These are real, and the program does not pretend otherwise.
 
+* **Removal is offered for four ecosystems only** — pacman, the AUR helper, Omarchy
+  plugins and Cargo — because those have a manager that owns the files. Everything else
+  is inspection: deleting a plugin directory or a font because a name matched is exactly
+  what this program refuses to do.
 * **Updates are only offered for flatpak.** Arch does not support partial upgrades, so
   a per-package update would be a lie; a whole-system upgrade is a different operation
   with different consent, and is not in this version.
@@ -131,5 +164,9 @@ These are real, and the program does not pretend otherwise.
   detached rather than joined, so the pipe can stay open server-side.
 * **flatpak's present path is verified through fixtures only** on the machine this was
   developed on (no flatpak installed there). Its unavailable path is verified live.
+* **A lazy-install shim is never executed.** `uv` behind mise would install itself on
+  first run, so the Python adapter reports the integration as unavailable with that
+  reason instead of triggering an install. On the reference machine that is exactly what
+  happens.
 * **No visual verification in a headless environment.** The TUI needs a real terminal;
   without a TTY the program exits with a clear message instead of corrupting the shell.
