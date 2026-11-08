@@ -8,8 +8,12 @@
 //!   votes, popularity, maintainer, last modification. Run lazily, only when a
 //!   detail view asks for it.
 //!
-//! This adapter never installs, updates or removes anything yet: its only
-//! capability is inspection.
+//! * `<helper> -Qi <package>` / `<helper> -Ql <package>` — the installed facts of one
+//!   foreign package, asked through the helper so the answer comes from the same
+//!   owner that will perform the removal.
+//! * `<helper> -R <package>` — removal, delegated to the detected helper. This
+//!   adapter never mixes databases: it does not call `pacman -R` for a package the
+//!   helper built, and it does not install or update anything.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -50,7 +54,15 @@ const COMMANDS: &[&str] = &[
     "paru --version",
     "yay -Si <package>",
     "paru -Si <package>",
+    "yay -Qi <package>",
+    "paru -Qi <package>",
+    "yay -Ql <package>",
+    "paru -Ql <package>",
+    "yay -R <package>",
+    "paru -R <package>",
 ];
+
+const INSTALLED_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A helper that actually resolved in the executable search path.
 struct Helper {
@@ -66,6 +78,29 @@ impl AurAdapter {
     pub fn new(runner: Arc<dyn CommandRunner>) -> Self {
         Self { runner }
     }
+
+    /// Runs one installed-package query through the chosen helper.
+    fn run_installed(
+        &self,
+        helper: &Helper,
+        flag: &str,
+        name: &str,
+        context: &str,
+    ) -> Result<CommandOutput, AdapterError> {
+        let spec = CommandSpec::capture(
+            helper.program,
+            vec![flag.to_string(), name.to_string()],
+        )
+        .with_timeout(INSTALLED_TIMEOUT);
+        self.runner.run(&spec).map_err(|error| match error {
+            ProcessError::NotFound { .. } => AdapterError::ToolUnavailable {
+                tool: helper.program.to_string(),
+                reason: "not found in the executable search path".to_string(),
+            },
+            other => AdapterError::command(context, spec.display(), other.to_string()),
+        })
+    }
+
 
     /// The helper this adapter speaks to: `yay` first, then `paru`.
     fn helper(&self) -> Option<Helper> {
@@ -159,7 +194,7 @@ impl ComponentAdapter for AurAdapter {
     }
 
     fn capabilities(&self) -> Vec<ComponentCapability> {
-        vec![ComponentCapability::Inspect]
+        vec![ComponentCapability::Inspect, ComponentCapability::Remove]
     }
 
     fn status(&self) -> AdapterStatus {
@@ -232,22 +267,177 @@ impl ComponentAdapter for AurAdapter {
         self.enrich_fields(&component.id.native_id)
     }
 
-    fn supports(&self, _component: &Component, _kind: OperationKind) -> bool {
-        // Operation executors land with their own plan, confirmation and tests.
-        false
+    /// This adapter claims removal only for foreign packages, and only when a
+    /// helper actually exists to do it. Official packages stay with pacman.
+    fn supports(&self, component: &Component, kind: OperationKind) -> bool {
+        kind == OperationKind::Remove && is_foreign(component) && self.helper().is_some()
     }
 
     fn plan_operation(
         &self,
-        _request: &OperationRequest,
-        _component: &Component,
+        request: &OperationRequest,
+        component: &Component,
     ) -> Result<OperationPlan, AdapterError> {
-        Err(AdapterError::unsupported(ADAPTER_ID, "operation planning"))
+        if request.kind != OperationKind::Remove {
+            return Err(AdapterError::unsupported(ADAPTER_ID, request.kind.label()));
+        }
+        let helper = self.helper().ok_or_else(|| AdapterError::ToolUnavailable {
+            tool: HELPERS.join(" / "),
+            reason: "neither AUR helper is installed, so the removal cannot be delegated"
+                .to_string(),
+        })?;
+
+        let name = &request.target.native_id;
+        if let Err(reason) = validate_pacman_name(name) {
+            return Err(AdapterError::InvalidId {
+                adapter: ADAPTER_ID.to_string(),
+                value: name.clone(),
+                reason: reason.to_string(),
+            });
+        }
+
+        // Re-read through the helper: the plan must describe the system as it is.
+        let query = self.run_installed(&helper, "-Qi", name, "helper -Qi <package>")?;
+        if !query.success() {
+            return Err(AdapterError::command(
+                "helper -Qi <package>",
+                format!("{} -Qi {name}", helper.program),
+                format!("the package is no longer installed: {}", query.stderr.trim()),
+            ));
+        }
+        let records = parse_qi(&query.stdout);
+        let Some(record) = records.first() else {
+            return Err(AdapterError::Parse {
+                context: format!("{} -Qi {name}", helper.program),
+                detail: "no record returned".to_string(),
+            });
+        };
+
+        let dependents = record.list("Required By");
+        let mut blocking = Vec::new();
+        let mut affected = Vec::new();
+        if !dependents.is_empty() {
+            blocking.push(format!(
+                "{} package(s) require it: {}. Removing it would break them, and this version \
+                 does not cascade removals.",
+                dependents.len(),
+                summarise_list(&dependents)
+            ));
+            affected.extend(dependents.iter().map(|dependent| format!("dependent: {dependent}")));
+        }
+
+        let mut unknown = Vec::new();
+        match self.run_installed(&helper, "-Ql", name, "helper -Ql <package>") {
+            Ok(listing) if listing.success() => {
+                let files = listing.stdout.lines().filter(|line| !line.trim().is_empty()).count();
+                affected.push(format!("{files} file(s) owned by the package (helper -Ql)"));
+            }
+            _ => unknown.push(
+                "the list of files owned by the package could not be read (helper -Ql)".to_string(),
+            ),
+        }
+        unknown.push("whether a package database backup exists is not checked".to_string());
+
+        Ok(OperationPlan {
+            adapter: ADAPTER_ID.to_string(),
+            target: request.target.clone(),
+            target_name: component.name.clone(),
+            target_version: component.version.clone(),
+            kind: OperationKind::Remove,
+            commands: vec![crate::domain::PlannedCommand {
+                program: helper.program.to_string(),
+                args: vec!["-R".to_string(), name.clone()],
+                requires_root: true,
+                requires_tty: true,
+                rationale: format!(
+                    "remove this package through {} , the helper that owns its AUR build record",
+                    helper.program
+                ),
+            }],
+            affected,
+            blocking,
+            unknown,
+            notes: vec![
+                format!(
+                    "the removal is delegated to {}; the pacman database is its only target",
+                    helper.program
+                ),
+                "dependencies are left installed and may become orphans".to_string(),
+                "the operation is not reversible: no automatic backup of a removal exists"
+                    .to_string(),
+            ],
+        })
     }
 
-    fn execute(&self, _plan: &OperationPlan) -> Result<OperationOutcome, AdapterError> {
-        Err(AdapterError::unsupported(ADAPTER_ID, "operation execution"))
+    fn execute(&self, plan: &OperationPlan) -> Result<OperationOutcome, AdapterError> {
+        if plan.adapter != ADAPTER_ID {
+            return Err(AdapterError::InvalidId {
+                adapter: ADAPTER_ID.to_string(),
+                value: plan.adapter.clone(),
+                reason: "this plan belongs to another adapter".to_string(),
+            });
+        }
+        if let Err(reason) = validate_pacman_name(&plan.target.native_id) {
+            return Err(AdapterError::InvalidId {
+                adapter: ADAPTER_ID.to_string(),
+                value: plan.target.native_id.clone(),
+                reason: reason.to_string(),
+            });
+        }
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = None;
+        let mut command_display = String::new();
+
+        for command in &plan.commands {
+            // Only a detected helper may run, and only with the confirmed argv.
+            if !HELPERS.contains(&command.program.as_str()) {
+                return Err(AdapterError::InvalidId {
+                    adapter: ADAPTER_ID.to_string(),
+                    value: command.program.clone(),
+                    reason: "this adapter only runs a detected AUR helper".to_string(),
+                });
+            }
+            command_display = command.display();
+            let spec = if command.requires_tty {
+                CommandSpec::interactive(command.program.clone(), command.args.clone())
+            } else {
+                CommandSpec::capture(command.program.clone(), command.args.clone())
+            };
+            let output = self.runner.run(&spec).map_err(|error| {
+                AdapterError::command("execute", command.display(), error.to_string())
+            })?;
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
+            exit_code = output.exit_code;
+            if !output.success() {
+                break;
+            }
+        }
+
+        let success = exit_code == Some(0);
+        Ok(OperationOutcome {
+            success,
+            exit_code,
+            command_display,
+            stdout_tail: crate::domain::tail_text(&stdout, 2000),
+            stderr_tail: crate::domain::tail_text(&stderr, 2000),
+            summary: if success {
+                format!("removed {}", plan.target_name)
+            } else {
+                format!("the helper did not complete the removal (exit {exit_code:?})")
+            },
+        })
     }
+}
+
+fn summarise_list(items: &[String]) -> String {
+    const LIMIT: usize = 8;
+    if items.len() <= LIMIT {
+        return items.join(", ");
+    }
+    format!("{} … (+{} more)", items[..LIMIT].join(", "), items.len() - LIMIT)
 }
 
 /// Whether `component` is a foreign pacman package, the only kind of component
@@ -381,15 +571,115 @@ mod tests {
     }
 
     #[test]
-    fn offers_inspection_only_and_claims_no_operation() {
-        let adapter = adapter(helper_runner());
-        assert_eq!(adapter.capabilities(), vec![ComponentCapability::Inspect]);
+    fn removal_is_claimed_only_for_foreign_packages_and_only_with_a_helper() {
+        let adapter = AurAdapter::new(Arc::new(helper_runner()));
+        assert_eq!(
+            adapter.capabilities(),
+            vec![ComponentCapability::Inspect, ComponentCapability::Remove]
+        );
 
-        let package = foreign("visual-studio-code-bin");
-        assert!(!adapter.supports(&package, OperationKind::Remove));
-        assert!(!adapter.supports(&package, OperationKind::Update));
+        let foreign = foreign_component("some-aur-pkg");
+        assert!(adapter.supports(&foreign, OperationKind::Remove));
+
+        // Official packages stay with pacman; this adapter must not claim them.
+        let mut official = foreign.clone();
+        official.source = ComponentSource::Pacman {
+            origin: PacmanOrigin::Official { repo: Some("extra".to_string()) },
+        };
+        assert!(!adapter.supports(&official, OperationKind::Remove));
+
+        // Updates are not offered: Arch does not support partial upgrades.
+        assert!(!adapter.supports(&foreign, OperationKind::Update));
+
+        // Without a helper there is nothing to delegate to.
+        let alone = AurAdapter::new(Arc::new(FakeRunner::new()));
+        assert!(!alone.supports(&foreign, OperationKind::Remove));
     }
 
+    #[test]
+    fn a_plan_delegates_the_removal_to_the_detected_helper() {
+        let runner = helper_runner()
+            .on("yay -Qi some-aur-pkg", "Name : some-aur-pkg\nVersion : 1.0-1\nRequired By : None\n")
+            .on("yay -Ql some-aur-pkg", "some-aur-pkg /usr/bin/thing\n");
+        let adapter = AurAdapter::new(Arc::new(runner));
+        let request = OperationRequest::new(
+            crate::domain::ComponentId::new("pacman", "some-aur-pkg"),
+            OperationKind::Remove,
+        );
+        let plan = adapter
+            .plan_operation(&request, &foreign_component("some-aur-pkg"))
+            .expect("plan");
+
+        assert_eq!(plan.commands.len(), 1);
+        assert_eq!(plan.commands[0].display(), "yay -R some-aur-pkg");
+        assert!(plan.commands[0].requires_root);
+        assert!(plan.is_executable());
+        assert!(plan.affected.iter().any(|item| item.contains("1 file(s)")));
+        assert!(plan.notes.iter().any(|note| note.contains("delegated to yay")));
+    }
+
+    #[test]
+    fn a_foreign_plan_with_dependents_is_blocked() {
+        let runner = helper_runner()
+            .on("yay -Qi blocked-pkg", "Name : blocked-pkg\nRequired By : other-pkg\n")
+            .on("yay -Ql blocked-pkg", "blocked-pkg /usr/bin/thing\n");
+        let adapter = AurAdapter::new(Arc::new(runner));
+        let request = OperationRequest::new(
+            crate::domain::ComponentId::new("pacman", "blocked-pkg"),
+            OperationKind::Remove,
+        );
+        let plan = adapter
+            .plan_operation(&request, &foreign_component("blocked-pkg"))
+            .expect("plan");
+        assert!(!plan.is_executable());
+        assert!(plan.blocking.iter().any(|reason| reason.contains("other-pkg")));
+    }
+
+    #[test]
+    fn execution_refuses_a_program_that_is_not_a_known_helper() {
+        let adapter = AurAdapter::new(Arc::new(helper_runner()));
+        let plan = OperationPlan {
+            adapter: "aur".to_string(),
+            target: crate::domain::ComponentId::new("pacman", "some-aur-pkg"),
+            target_name: "some-aur-pkg".to_string(),
+            target_version: None,
+            kind: OperationKind::Remove,
+            commands: vec![crate::domain::PlannedCommand {
+                program: "sh".to_string(),
+                args: vec!["-c".to_string(), "rm -rf /".to_string()],
+                requires_root: true,
+                requires_tty: true,
+                rationale: "tampered".to_string(),
+            }],
+            affected: Vec::new(),
+            blocking: Vec::new(),
+            unknown: Vec::new(),
+            notes: Vec::new(),
+        };
+        assert!(adapter.execute(&plan).is_err());
+    }
+
+    /// A foreign pacman component: owned by pacman, operated through the AUR helper.
+    fn foreign_component(native_id: &str) -> Component {
+        Component {
+            id: crate::domain::ComponentId::new("pacman", native_id),
+            name: native_id.to_string(),
+            version: Some("1.0-1".to_string()),
+            description: Some("an AUR package".to_string()),
+            category: crate::domain::ComponentCategory::Package,
+            source: ComponentSource::Pacman { origin: PacmanOrigin::Foreign },
+            status: crate::domain::ComponentStatus::Installed,
+            confidence: crate::domain::DetectionConfidence::Authoritative,
+            capabilities: vec![ComponentCapability::Inspect, ComponentCapability::Remove],
+            detection: crate::domain::DetectionMethod::command("pacman", vec!["-Q".to_string()]),
+            installed_size: None,
+            location: None,
+            installed_at: None,
+            depends_on: Vec::new(),
+            required_by: Vec::new(),
+            extra: Vec::new(),
+        }
+    }
     #[test]
     fn details_is_refused_explicitly() {
         let error = adapter(helper_runner())

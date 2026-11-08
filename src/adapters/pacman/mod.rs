@@ -467,14 +467,17 @@ impl ComponentAdapter for PacmanAdapter {
     }
 }
 
-/// Removal is offered only where this adapter owns the record. Foreign packages
-/// belong to their AUR helper's database.
+/// Capabilities of the *component*, not of this adapter. A foreign package can be
+/// removed, but by its AUR helper, not here: the component advertises what is
+/// possible, while `supports` below decides who runs it.
 fn capabilities_for(origin: &PacmanOrigin) -> Vec<ComponentCapability> {
     match origin {
         PacmanOrigin::Official { .. } => {
             vec![ComponentCapability::Inspect, ComponentCapability::Remove]
         }
-        PacmanOrigin::Foreign => vec![ComponentCapability::Inspect],
+        PacmanOrigin::Foreign => {
+            vec![ComponentCapability::Inspect, ComponentCapability::Remove]
+        }
     }
 }
 
@@ -633,10 +636,13 @@ mod tests {
         );
         assert!(pacman.supports(btop, OperationKind::Remove));
 
-        // Foreign packages are removed through their AUR helper: a different
+        // Foreign packages are removable, but through their AUR helper: a different
         // database owner, so this adapter must not claim them.
         let yay = components.iter().find(|component| component.name == "yay").expect("yay");
-        assert_eq!(yay.capabilities, vec![ComponentCapability::Inspect]);
+        assert_eq!(
+            yay.capabilities,
+            vec![ComponentCapability::Inspect, ComponentCapability::Remove]
+        );
         assert!(!pacman.supports(yay, OperationKind::Remove));
 
         // Arch does not support partial upgrades, so no update is offered here.
