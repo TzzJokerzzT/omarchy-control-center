@@ -44,6 +44,8 @@ pub fn draw(frame: &mut Frame, state: &UiState) {
     match state.screen {
         Screen::Inventory => draw_inventory(frame, layout[1], state),
         Screen::Details => draw_details_screen(frame, layout[1], state),
+        Screen::Plan => draw_plan(frame, layout[1], state),
+        Screen::Result => draw_result(frame, layout[1], state),
         Screen::Adapters => draw_adapters(frame, layout[1], state),
         Screen::Help => draw_help(frame, layout[1]),
     }
@@ -112,6 +114,9 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &UiState) {
             " [↑↓] move  [Tab] pane  [Enter] details  [/] search  [a] adapters  [?] help  [q] quit "
         }
         (Screen::Details, false) => " [Esc] back  [a] adapters  [?] help  [q] quit ",
+        (Screen::Plan, false) => " [type] the exact name  [Enter] confirm  [Esc] cancel ",
+        (Screen::Result, false) => " [Enter] back to the inventory ",
+        (Screen::Adapters, false) => " [i] inventory  [Esc] back  [?] help  [q] quit ",
         _ => " [i] inventory  [Esc] back  [?] help  [q] quit ",
     };
 
@@ -375,6 +380,184 @@ fn draw_details_screen(frame: &mut Frame, area: Rect, state: &UiState) {
     );
 }
 
+fn draw_plan(frame: &mut Frame, area: Rect, state: &UiState) {
+    let Some(pending) = &state.pending else {
+        frame.render_widget(
+            Paragraph::new("No operation is being prepared.").block(Block::default().borders(Borders::ALL)),
+            area,
+        );
+        return;
+    };
+    let plan = &pending.plan;
+    let mut lines: Vec<Line> = vec![
+        Line::from(vec![
+            bold(plan.target_name.clone()),
+            muted("  "),
+            accent(shown(plan.target_version.as_deref()).to_string()),
+            muted("   "),
+            Span::raw(plan.adapter.clone()),
+        ]),
+        Line::from(vec![
+            muted("Action      "),
+            semantic(Color::Yellow, plan.kind.label().to_uppercase()),
+            muted("   identity  "),
+            Span::raw(plan.target.to_string()),
+        ]),
+        Line::from(""),
+        Line::from(accent("WHAT WILL RUN")),
+    ];
+
+    if plan.commands.is_empty() {
+        lines.push(Line::from(semantic(Color::Red, "the adapter proposed no command: nothing to run")));
+    }
+    for command in &plan.commands {
+        let mut spans = vec![semantic(Color::Green, format!("  $ {}", command.display()))];
+        if command.requires_root {
+            spans.push(muted("  [root]"));
+        }
+        if command.requires_tty {
+            spans.push(muted("  [terminal]"));
+        }
+        lines.push(Line::from(spans));
+        lines.push(Line::from(vec![muted(format!("    {}", command.rationale))]));
+    }
+
+    if plan.requires_tty() {
+        lines.push(Line::from(vec![muted(
+            "  The terminal is handed to this command while it runs, so a privilege prompt \
+             works normally. No password is ever read or stored by this program.",
+        )]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(accent("WHAT ELSE COULD BE AFFECTED")));
+    if plan.affected.is_empty() {
+        lines.push(Line::from(muted("  nothing reported beyond the target itself")));
+    } else {
+        for affected in &plan.affected {
+            lines.push(Line::from(vec![semantic(Color::Yellow, "  "), Span::raw(affected.clone())]));
+        }
+    }
+
+    if !plan.blocking.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(semantic(Color::Red, "BLOCKED — THIS OPERATION WILL NOT RUN")));
+        for reason in &plan.blocking {
+            lines.push(Line::from(vec![semantic(Color::Red, "  "), Span::raw(reason.clone())]));
+        }
+    }
+
+    if !plan.unknown.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(semantic(Color::Yellow, "NOT DETERMINED")));
+        for fact in &plan.unknown {
+            lines.push(Line::from(vec![semantic(Color::Yellow, "  "), Span::raw(fact.clone())]));
+        }
+    }
+
+    if !plan.notes.is_empty() {
+        lines.push(Line::from(""));
+        for note in &plan.notes {
+            lines.push(Line::from(vec![muted("  "), muted(note.clone())]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    if pending.is_blocked() {
+        lines.push(Line::from(semantic(
+            Color::Red,
+            "Nothing can be confirmed while the plan is blocked. Press Esc.",
+        )));
+    } else {
+        lines.push(Line::from(vec![
+            bold("Type  "),
+            accent(pending.confirmation_phrase().to_string()),
+            bold("  to confirm: "),
+            Span::styled(state.plan_input.clone(), Style::new().fg(Color::Yellow)),
+            Span::styled("▏", Style::new().fg(Color::Cyan)),
+        ]));
+        let satisfied = pending.confirmation_satisfied(&state.plan_input);
+        lines.push(Line::from(if satisfied {
+            semantic(Color::Green, "Press Enter to execute exactly the command above.")
+        } else {
+            muted("Enter stays disabled until the name matches exactly.")
+        }));
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::new().fg(Color::Yellow))
+                    .title(" OPERATION PLAN "),
+            )
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn draw_result(frame: &mut Frame, area: Rect, state: &UiState) {
+    let Some(record) = &state.last_record else {
+        frame.render_widget(
+            Paragraph::new("No operation has run in this session.").block(Block::default().borders(Borders::ALL)),
+            area,
+        );
+        return;
+    };
+
+    let banner = if record.success {
+        semantic(Color::Green, format!("{} succeeded", record.kind))
+    } else {
+        semantic(Color::Red, format!("{} failed", record.kind))
+    };
+
+    let mut lines = vec![
+        Line::from(banner),
+        Line::from(""),
+        Line::from(vec![muted("Component   "), bold(record.component_name.clone()), muted(format!("  ({})", record.component))]),
+        Line::from(vec![
+            muted("Exit code   "),
+            Span::raw(
+                record
+                    .exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "terminated by a signal".to_string()),
+            ),
+        ]),
+        Line::from(vec![muted("Started     "), Span::raw(record.started_at())]),
+        Line::from(vec![muted("Command     "), Span::raw(record.command.clone())]),
+        Line::from(vec![muted("Confirmed   "), Span::raw(record.confirmed_by.clone())]),
+        Line::from(vec![muted("Summary     "), Span::raw(record.summary.clone())]),
+    ];
+
+    if !record.error_tail.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(semantic(Color::Red, "ERROR OUTPUT")));
+        for line in record.error_tail.lines().take(12) {
+            lines.push(Line::from(Span::raw(line.to_string())));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(muted(
+        "The exit code and the error output are kept verbatim: this screen never reports a \
+         failure as success.",
+    )));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::new().fg(if record.success { Color::Green } else { Color::Red }))
+                    .title(" OPERATION RESULT "),
+            )
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 fn draw_adapters(frame: &mut Frame, area: Rect, state: &UiState) {
     let header =
         Row::new(vec!["ADAPTER", "STATE", "TOOL", "DETAIL"]).style(
@@ -469,6 +652,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("  Enter", "open the details of the selected component"),
         ("  Esc", "go back, then quit from the inventory"),
         ("  /", "search by name, identifier, description or source"),
+        ("  d / u", "preview a removal or an update for the selected component"),
         ("  i / a / ?", "inventory, adapter status, this help"),
         ("  q, Q", "quit (never interrupts a running operation)"),
         ("", ""),

@@ -3,9 +3,11 @@
 //! Nothing here draws, and nothing here spawns a process directly — adapters do
 //! that through the infrastructure layer.
 
+pub mod operations;
 mod registry;
 pub mod search;
 
+pub use operations::{OperationRecord, PendingOperation, PrepareError};
 pub use registry::{
     AdapterFailure, AdapterRegistry, DuplicateIdentity, InventorySnapshot, ProviderError,
     RegistryError,

@@ -2,6 +2,11 @@
 //!
 //! Loading happens on background threads and arrives as messages. The loop never
 //! waits for a command, so the interface stays responsive while adapters work.
+//!
+//! The one exception is deliberate: an operation that needs the controlling
+//! terminal (a privilege prompt) releases the terminal to that command, waits for
+//! it, and takes the terminal back. Nothing else can run during that handoff, which
+//! is exactly the guarantee we want for a destructive action.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,8 +18,9 @@ use crossterm::event::{self, Event as TerminalEvent, KeyCode, KeyEvent, KeyEvent
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
+use crate::application::operations::{self, OperationRecord, PendingOperation};
 use crate::application::{AdapterRegistry, InventorySnapshot, search};
-use crate::domain::{Component, SourceGroup};
+use crate::domain::{Component, OperationKind, SourceGroup};
 use crate::infrastructure::system::SystemInfo;
 use crate::term::TerminalSession;
 use crate::ui;
@@ -23,6 +29,8 @@ use crate::ui;
 pub enum Screen {
     Inventory,
     Details,
+    Plan,
+    Result,
     Adapters,
     Help,
 }
@@ -34,6 +42,13 @@ pub enum Focus {
     List,
 }
 
+/// Everything an action needs from outside the state, so the state never owns the
+/// system: the registry to route an operation, and the terminal to hand over.
+pub struct Actions<'a> {
+    pub registry: &'a AdapterRegistry,
+    pub session: &'a mut TerminalSession,
+}
+
 pub struct UiState {
     pub system: SystemInfo,
     pub read_only: bool,
@@ -43,16 +58,17 @@ pub struct UiState {
     pub previous_screen: Screen,
     pub focus: Focus,
     pub loading: bool,
-    /// `None` means "all groups".
+    pub reload_requested: bool,
+    /// Forces a full repaint after the terminal was handed to a command.
+    pub needs_full_redraw: bool,
     pub group_filter: Option<SourceGroup>,
-    /// Position inside the sidebar list, index 0 being "All".
     pub sidebar_index: usize,
-    /// Position inside the filtered component list.
     pub selected: usize,
-    /// Applied search text. Empty means "no search".
     pub query: String,
-    /// True while the search field is capturing keystrokes.
     pub searching: bool,
+    pub pending: Option<PendingOperation>,
+    pub plan_input: String,
+    pub last_record: Option<OperationRecord>,
     pub quit: bool,
     pub status_line: String,
 }
@@ -73,11 +89,16 @@ impl UiState {
             previous_screen: Screen::Inventory,
             focus: Focus::List,
             loading: true,
+            reload_requested: false,
+            needs_full_redraw: false,
             group_filter: None,
             sidebar_index: 0,
             selected: 0,
             query: String::new(),
             searching: false,
+            pending: None,
+            plan_input: String::new(),
+            last_record: None,
             quit: false,
             status_line,
         }
@@ -111,7 +132,6 @@ impl UiState {
     }
 
     /// Components matching the active group filter and search, in display order.
-    /// A search reorders by score; without a search the inventory order stands.
     pub fn visible(&self) -> Vec<&Component> {
         let query = self.query.trim();
         if query.is_empty() {
@@ -218,7 +238,97 @@ impl UiState {
         }
     }
 
-    fn on_key(&mut self, key: KeyEvent) {
+    /// Builds the preview for the selected component. A refusal is shown, never
+    /// silently ignored: the human must know why an action is not offered.
+    fn request_operation(&mut self, kind: OperationKind, actions: &Actions<'_>) {
+        let Some(component) = self.selected_component().cloned() else {
+            self.status_line = "select a component first".to_string();
+            return;
+        };
+        if !component.supports(match kind {
+            OperationKind::Remove => crate::domain::ComponentCapability::Remove,
+            OperationKind::Update => crate::domain::ComponentCapability::Update,
+        }) {
+            self.status_line = format!(
+                "{} is not offered for {} by its adapter",
+                kind.label(),
+                component.name
+            );
+            return;
+        }
+
+        match operations::prepare(actions.registry, &component, kind, self.read_only) {
+            Ok(pending) => {
+                if pending.is_blocked() {
+                    self.status_line = format!(
+                        "blocked: {}",
+                        pending.plan.blocking.join("; ")
+                    );
+                } else {
+                    self.status_line.clear();
+                }
+                self.plan_input.clear();
+                self.pending = Some(pending);
+                self.open(Screen::Plan);
+            }
+            Err(error) => self.status_line = error.to_string(),
+        }
+    }
+
+    /// Runs the confirmed plan: re-verifies it, hands the terminal over when the
+    /// command needs it, and records the real outcome.
+    fn confirm_operation(&mut self, actions: &mut Actions<'_>) {
+        let Some(pending) = self.pending.clone() else { return };
+
+        if !pending.confirmation_satisfied(&self.plan_input) {
+            self.status_line =
+                format!("type exactly '{}' to confirm, or Esc to cancel", pending.confirmation_phrase());
+            return;
+        }
+
+        let handover = pending.plan.requires_tty();
+        if handover {
+            // The command owns the terminal while it runs, so a privilege prompt
+            // works normally and we never read a password ourselves.
+            actions.session.suspend().ok();
+        }
+        let started = operations::now_unix();
+        let outcome = operations::execute_verified(actions.registry, &pending, self.read_only);
+        if handover {
+            actions.session.resume().ok();
+        }
+        self.needs_full_redraw = true;
+
+        match outcome {
+            Ok(outcome) => {
+                let record = OperationRecord::from_outcome(&pending.plan, &outcome, started);
+                self.status_line = if outcome.success {
+                    format!("{} completed: {}", pending.plan.kind.label(), pending.plan.target_name)
+                } else {
+                    format!(
+                        "{} failed with exit code {:?}: {}",
+                        pending.plan.kind.label(),
+                        outcome.exit_code,
+                        outcome.stderr_tail.lines().next().unwrap_or("no message")
+                    )
+                };
+                self.last_record = Some(record);
+                self.pending = None;
+                self.plan_input.clear();
+                self.screen = Screen::Result;
+                // The inventory changed (or may have): read it again.
+                self.reload_requested = true;
+            }
+            Err(error) => {
+                self.status_line = error.to_string();
+                self.pending = None;
+                self.plan_input.clear();
+                self.screen = Screen::Inventory;
+            }
+        }
+    }
+
+    fn on_key(&mut self, key: KeyEvent, actions: &mut Actions<'_>) {
         if self.searching {
             match key.code {
                 KeyCode::Esc => {
@@ -234,6 +344,28 @@ impl UiState {
                 KeyCode::Char(character) if !character.is_control() => {
                     self.query.push(character);
                     self.selected = 0;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // The confirmation field owns every printable key, so a name containing
+        // 'q' can be typed without quitting.
+        if self.screen == Screen::Plan {
+            match key.code {
+                KeyCode::Esc => {
+                    self.pending = None;
+                    self.plan_input.clear();
+                    self.status_line = "operation cancelled: nothing was executed".to_string();
+                    self.back();
+                }
+                KeyCode::Enter => self.confirm_operation(actions),
+                KeyCode::Backspace => {
+                    self.plan_input.pop();
+                }
+                KeyCode::Char(character) if !character.is_control() => {
+                    self.plan_input.push(character);
                 }
                 _ => {}
             }
@@ -261,6 +393,16 @@ impl UiState {
                     self.searching = true;
                 }
             }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                if self.screen == Screen::Inventory {
+                    self.request_operation(OperationKind::Remove, actions);
+                }
+            }
+            KeyCode::Char('u') | KeyCode::Char('U') => {
+                if self.screen == Screen::Inventory {
+                    self.request_operation(OperationKind::Update, actions);
+                }
+            }
             KeyCode::Char('i') => self.screen = Screen::Inventory,
             KeyCode::Char('a') => self.open(Screen::Adapters),
             KeyCode::Tab | KeyCode::BackTab => {
@@ -268,19 +410,18 @@ impl UiState {
                     self.toggle_focus();
                 }
             }
-            KeyCode::Enter => {
-                if self.screen == Screen::Inventory {
-                    match self.focus {
-                        Focus::Sidebar => self.focus = Focus::List,
-                        Focus::List if self.selected_component().is_some() => {
-                            self.open(Screen::Details)
+            KeyCode::Enter => match self.screen {
+                Screen::Inventory => match self.focus {
+                    Focus::Sidebar => self.focus = Focus::List,
+                    Focus::List => {
+                        if self.selected_component().is_some() {
+                            self.open(Screen::Details);
                         }
-                        Focus::List => {}
                     }
-                } else if self.screen == Screen::Details {
-                    self.back();
-                }
-            }
+                },
+                Screen::Result | Screen::Details => self.back(),
+                _ => {}
+            },
             KeyCode::Up | KeyCode::Char('k') => match (self.screen, self.focus) {
                 (Screen::Inventory, Focus::Sidebar) => self.move_sidebar(-1),
                 (Screen::Inventory, Focus::List) => self.move_selection(-1),
@@ -327,10 +468,11 @@ pub fn run(bootstrap: Bootstrap) -> anyhow::Result<()> {
 
     let cancel = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = mpsc::channel();
-    spawn_loader(Arc::clone(&bootstrap.registry), sender, Arc::clone(&cancel));
+    spawn_loader(Arc::clone(&bootstrap.registry), sender.clone(), Arc::clone(&cancel));
 
     let mut state = UiState::new(bootstrap.system, bootstrap.read_only, bootstrap.notices);
-    let outcome = event_loop(&mut terminal, &mut state, &receiver);
+    let registry = Arc::clone(&bootstrap.registry);
+    let outcome = event_loop(&mut terminal, &mut state, &receiver, &registry, &mut session, &sender);
     cancel.store(true, Ordering::Relaxed);
 
     drop(terminal);
@@ -341,10 +483,11 @@ pub fn run(bootstrap: Bootstrap) -> anyhow::Result<()> {
 fn spawn_loader(
     registry: Arc<AdapterRegistry>,
     sender: mpsc::Sender<Message>,
-    _cancel: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
         let snapshot = registry.load_all();
+        let _ = cancel.load(Ordering::Relaxed);
         let _ = sender.send(Message::Loaded(Box::new(snapshot)));
     });
 }
@@ -353,6 +496,9 @@ fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     state: &mut UiState,
     receiver: &Receiver<Message>,
+    registry: &Arc<AdapterRegistry>,
+    session: &mut TerminalSession,
+    sender: &mpsc::Sender<Message>,
 ) -> anyhow::Result<()> {
     loop {
         loop {
@@ -360,6 +506,17 @@ fn event_loop(
                 Ok(message) => state.apply(message),
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
+        }
+
+        if state.reload_requested {
+            state.reload_requested = false;
+            state.loading = true;
+            spawn_loader(Arc::clone(registry), sender.clone(), Arc::new(AtomicBool::new(false)));
+        }
+
+        if state.needs_full_redraw {
+            state.needs_full_redraw = false;
+            terminal.clear().ok();
         }
 
         terminal.draw(|frame| ui::draw(frame, state))?;
@@ -370,8 +527,11 @@ fn event_loop(
 
         if event::poll(Duration::from_millis(120)).context("cannot poll terminal events")? {
             match event::read().context("cannot read a terminal event")? {
-                TerminalEvent::Key(key) if key.kind == KeyEventKind::Press => state.on_key(key),
-                TerminalEvent::Resize(_, _) => {}
+                TerminalEvent::Key(key) if key.kind == KeyEventKind::Press => {
+                    let mut actions = Actions { registry: registry.as_ref(), session };
+                    state.on_key(key, &mut actions);
+                }
+                TerminalEvent::Resize(_, _) => state.needs_full_redraw = true,
                 _ => {}
             }
         }
