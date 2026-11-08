@@ -46,6 +46,7 @@ pub fn draw(frame: &mut Frame, state: &UiState) {
         Screen::Details => draw_details_screen(frame, layout[1], state),
         Screen::Plan => draw_plan(frame, layout[1], state),
         Screen::Result => draw_result(frame, layout[1], state),
+        Screen::History => draw_history(frame, layout[1], state),
         Screen::Adapters => draw_adapters(frame, layout[1], state),
         Screen::Help => draw_help(frame, layout[1]),
     }
@@ -111,11 +112,12 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &UiState) {
     let keys = match (state.screen, state.searching) {
         (_, true) => " [type] filter  [Enter] keep  [Esc] clear ",
         (Screen::Inventory, false) => {
-            " [↑↓] move  [Tab] pane  [Enter] details  [/] search  [a] adapters  [?] help  [q] quit "
+            " [↑↓] move  [Enter] details  [/] search  [d] remove  [H] history  [?] help  [q] quit "
         }
         (Screen::Details, false) => " [Esc] back  [a] adapters  [?] help  [q] quit ",
         (Screen::Plan, false) => " [type] the exact name  [Enter] confirm  [Esc] cancel ",
         (Screen::Result, false) => " [Enter] back to the inventory ",
+        (Screen::History, false) => " [↑↓] browse  [Esc] back  [i] inventory ",
         (Screen::Adapters, false) => " [i] inventory  [Esc] back  [?] help  [q] quit ",
         _ => " [i] inventory  [Esc] back  [?] help  [q] quit ",
     };
@@ -558,6 +560,58 @@ fn draw_result(frame: &mut Frame, area: Rect, state: &UiState) {
     );
 }
 
+fn draw_history(frame: &mut Frame, area: Rect, state: &UiState) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" OPERATION HISTORY ({}) ", state.history_entries.len()));
+
+    if state.history_entries.is_empty() {
+        frame.render_widget(
+            Paragraph::new(
+                "No operation has been recorded yet.\n\nEvery executed operation is appended here \
+                 with its timestamp, component, command, exit code and error summary. No password, \
+                 token or configuration content is ever stored.",
+            )
+            .block(block)
+            .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+
+    let mut items: Vec<ListItem> = Vec::new();
+    for (index, record) in state.history_entries.iter().enumerate() {
+        let marker = if record.success {
+            semantic(Color::Green, "ok  ")
+        } else {
+            semantic(Color::Red, "fail")
+        };
+        let style = if index == state.history_selected {
+            Style::new().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::new()
+        };
+        items.push(
+            ListItem::new(vec![
+                Line::from(vec![
+                    marker,
+                    muted(format!(" {} ", record.started_at())),
+                    bold(record.component_name.clone()),
+                    muted(format!("  {} · {}", record.kind, record.adapter)),
+                    muted(format!("  exit {:?}", record.exit_code)),
+                ]),
+                Line::from(vec![muted(format!("     $ {}", record.command))]),
+            ])
+            .style(style),
+        );
+    }
+
+    let list = List::new(items).block(block).highlight_style(Style::new());
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.history_selected.min(state.history_entries.len() - 1)));
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
 fn draw_adapters(frame: &mut Frame, area: Rect, state: &UiState) {
     let header =
         Row::new(vec!["ADAPTER", "STATE", "TOOL", "DETAIL"]).style(
@@ -653,6 +707,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("  Esc", "go back, then quit from the inventory"),
         ("  /", "search by name, identifier, description or source"),
         ("  d / u", "preview a removal or an update for the selected component"),
+        ("  H", "operation history: what ran, when, and how it ended"),
         ("  i / a / ?", "inventory, adapter status, this help"),
         ("  q, Q", "quit (never interrupts a running operation)"),
         ("", ""),

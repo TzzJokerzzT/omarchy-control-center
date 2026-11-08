@@ -22,6 +22,7 @@ use crate::application::operations::{self, OperationRecord, PendingOperation};
 use crate::application::ConfirmDecision;
 use crate::application::{AdapterRegistry, InventorySnapshot, search};
 use crate::domain::{Component, OperationKind, SourceGroup};
+use crate::infrastructure::history::History;
 use crate::infrastructure::system::SystemInfo;
 use crate::term::TerminalSession;
 use crate::ui;
@@ -32,6 +33,7 @@ pub enum Screen {
     Details,
     Plan,
     Result,
+    History,
     Adapters,
     Help,
 }
@@ -70,12 +72,15 @@ pub struct UiState {
     pub pending: Option<PendingOperation>,
     pub plan_input: String,
     pub last_record: Option<OperationRecord>,
+    pub history: History,
+    pub history_entries: Vec<OperationRecord>,
+    pub history_selected: usize,
     pub quit: bool,
     pub status_line: String,
 }
 
 impl UiState {
-    pub fn new(system: SystemInfo, read_only: bool, notices: Vec<String>) -> Self {
+    pub fn new(system: SystemInfo, read_only: bool, notices: Vec<String>, history: History) -> Self {
         let status_line = if read_only {
             "read-only mode: destructive actions are disabled".to_string()
         } else {
@@ -100,6 +105,9 @@ impl UiState {
             pending: None,
             plan_input: String::new(),
             last_record: None,
+            history,
+            history_entries: Vec::new(),
+            history_selected: 0,
             quit: false,
             status_line,
         }
@@ -225,6 +233,19 @@ impl UiState {
         self.selected = next.clamp(0, count as isize - 1) as usize;
     }
 
+    fn refresh_history(&mut self) {
+        match self.history.recent(50) {
+            Ok(entries) => {
+                self.history_entries = entries;
+                self.history_selected = 0;
+            }
+            Err(error) => {
+                self.history_entries.clear();
+                self.status_line = format!("cannot read the operation history: {error}");
+            }
+        }
+    }
+
     fn open(&mut self, screen: Screen) {
         if self.screen != screen {
             self.previous_screen = self.screen;
@@ -319,6 +340,11 @@ impl UiState {
                         outcome.stderr_tail.lines().next().unwrap_or("no message")
                     )
                 };
+                if let Err(error) = self.history.append(&record) {
+                    // The outcome still stands; losing the audit line must be visible.
+                    self.status_line = format!("{}. WARNING: the history could not be written: {error}",
+                        self.status_line);
+                }
                 self.last_record = Some(record);
                 self.pending = None;
                 self.plan_input.clear();
@@ -412,6 +438,12 @@ impl UiState {
             }
             KeyCode::Char('i') => self.screen = Screen::Inventory,
             KeyCode::Char('a') => self.open(Screen::Adapters),
+            KeyCode::Char('H') => {
+                if self.screen != Screen::History {
+                    self.refresh_history();
+                    self.open(Screen::History);
+                }
+            }
             KeyCode::Tab | KeyCode::BackTab => {
                 if self.screen == Screen::Inventory {
                     self.toggle_focus();
@@ -426,17 +458,25 @@ impl UiState {
                         }
                     }
                 },
-                Screen::Result | Screen::Details => self.back(),
+                Screen::Result | Screen::Details | Screen::History => self.back(),
                 _ => {}
             },
             KeyCode::Up | KeyCode::Char('k') => match (self.screen, self.focus) {
                 (Screen::Inventory, Focus::Sidebar) => self.move_sidebar(-1),
                 (Screen::Inventory, Focus::List) => self.move_selection(-1),
+                (Screen::History, _) => {
+                    self.history_selected = self.history_selected.saturating_sub(1);
+                }
                 _ => {}
             },
             KeyCode::Down | KeyCode::Char('j') => match (self.screen, self.focus) {
                 (Screen::Inventory, Focus::Sidebar) => self.move_sidebar(1),
                 (Screen::Inventory, Focus::List) => self.move_selection(1),
+                (Screen::History, _) => {
+                    if self.history_selected + 1 < self.history_entries.len() {
+                        self.history_selected += 1;
+                    }
+                }
                 _ => {}
             },
             KeyCode::Right | KeyCode::Char('l') => {
@@ -461,6 +501,7 @@ enum Message {
 
 pub struct Bootstrap {
     pub registry: Arc<AdapterRegistry>,
+    pub history: History,
     pub system: SystemInfo,
     pub read_only: bool,
     pub notices: Vec<String>,
@@ -477,7 +518,12 @@ pub fn run(bootstrap: Bootstrap) -> anyhow::Result<()> {
     let (sender, receiver) = mpsc::channel();
     spawn_loader(Arc::clone(&bootstrap.registry), sender.clone(), Arc::clone(&cancel));
 
-    let mut state = UiState::new(bootstrap.system, bootstrap.read_only, bootstrap.notices);
+    let mut state = UiState::new(
+        bootstrap.system,
+        bootstrap.read_only,
+        bootstrap.notices,
+        bootstrap.history,
+    );
     let registry = Arc::clone(&bootstrap.registry);
     let outcome = event_loop(&mut terminal, &mut state, &receiver, &registry, &mut session, &sender);
     cancel.store(true, Ordering::Relaxed);

@@ -18,6 +18,7 @@ use anyhow::Context;
 
 use crate::cli::Args;
 use crate::infrastructure::config::Config;
+use crate::infrastructure::history::History;
 use crate::infrastructure::paths::AppPaths;
 use crate::infrastructure::system::{SystemInfo, guard_not_root};
 use crate::application::{AdapterRegistry, operations};
@@ -102,6 +103,7 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
 
     app::run(app::Bootstrap {
         registry: Arc::new(registry),
+        history: History::new(paths.history_file.clone()),
         system,
         read_only,
         notices,
