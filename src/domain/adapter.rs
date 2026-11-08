@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    AdapterError, Component, ComponentCapability, OperationKind, OperationOutcome, OperationPlan,
-    OperationRequest,
+    AdapterError, Component, ComponentCapability, DetailField, OperationKind, OperationOutcome,
+    OperationPlan, OperationRequest,
 };
 
 /// Whether an integration can actually be used on this machine.
@@ -69,6 +69,15 @@ pub trait ComponentAdapter: Send + Sync {
 
     /// Full list of components this adapter owns.
     fn list(&self) -> Result<Vec<Component>, AdapterError>;
+
+    /// Extra facts another adapter can contribute about a component it does not
+    /// own, shown in the detail view. `None` means "nothing to add"; a failure
+    /// to obtain them is also `None`, because enrichment must never fail a
+    /// details view.
+    fn enrich(&self, component: &Component) -> Option<Vec<DetailField>> {
+        let _ = component;
+        None
+    }
 
     /// Refresh one component from the source. `None` means it no longer exists,
     /// which must cancel any pending operation instead of proceeding.

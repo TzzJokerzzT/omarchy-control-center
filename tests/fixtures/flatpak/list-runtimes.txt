@@ -1,0 +1,2 @@
+runtime/org.freedesktop.Platform/x86_64/24.08	org.freedesktop.Platform	24.08	flathub	system	1.2 GB
+runtime/org.gnome.Platform/x86_64/46	org.gnome.Platform	46	flathub	user	980.5 MB

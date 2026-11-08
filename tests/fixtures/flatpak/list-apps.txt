@@ -1,0 +1,2 @@
+app/org.mozilla.firefox/x86_64/stable	org.mozilla.firefox	129.0.2	flathub	system	250.4 MB
+app/org.gnome.Calculator/x86_64/stable	org.gnome.Calculator	46.0	flathub	user	12.1 MB

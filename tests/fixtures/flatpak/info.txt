@@ -1,0 +1,17 @@
+Firefox - Fast, private and secure web browser
+
+          ID: org.mozilla.firefox
+         Ref: app/org.mozilla.firefox/x86_64/stable
+        Arch: x86_64
+      Branch: stable
+     Version: 129.0.2
+     License: MPL-2.0
+      Origin: flathub
+  Collection: org.flathub.Stable
+Installation: system
+Installed Size: 250.4 MB
+     Runtime: org.freedesktop.Platform/x86_64/24.08
+         Sdk: org.freedesktop.Sdk/x86_64/24.08
+
+     Subject: Web browser
+     Comment: Fast, private and secure web browser
