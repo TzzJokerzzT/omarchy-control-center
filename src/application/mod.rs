@@ -4,6 +4,7 @@
 //! that through the infrastructure layer.
 
 mod registry;
+pub mod search;
 
 pub use registry::{
     AdapterFailure, AdapterRegistry, DuplicateIdentity, InventorySnapshot, ProviderError,

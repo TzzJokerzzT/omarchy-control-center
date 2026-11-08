@@ -62,7 +62,7 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &UiState) {
 
     let mut spans = vec![
         Span::styled(
-            format!("{} components", state.snapshot.components.len()),
+            format!("{} components", state.visible().len()),
             Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
         muted("   ·   "),
@@ -71,6 +71,8 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &UiState) {
             Style::new().fg(if available == total { Color::Green } else { Color::Yellow }),
         ),
         muted(&format!("   ·   {}{hidden}{loading}", state.system.display_name())),
+        muted("   ·   "),
+        search_span(state),
     ];
     if state.read_only {
         spans.push(muted("   ·   "));
@@ -90,12 +92,26 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &UiState) {
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
+fn search_span(state: &UiState) -> Span<'static> {
+    if state.searching {
+        return Span::styled(
+            format!("search: {}▏", state.query),
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        );
+    }
+    if state.query.trim().is_empty() {
+        return muted("[/] search");
+    }
+    Span::styled(format!("search: {}", state.query), Style::new().fg(Color::Cyan))
+}
+
 fn draw_footer(frame: &mut Frame, area: Rect, state: &UiState) {
-    let keys = match state.screen {
-        Screen::Inventory => {
-            " [↑↓] move  [Tab] pane  [Enter] details  [a] adapters  [?] help  [q] quit "
+    let keys = match (state.screen, state.searching) {
+        (_, true) => " [type] filter  [Enter] keep  [Esc] clear ",
+        (Screen::Inventory, false) => {
+            " [↑↓] move  [Tab] pane  [Enter] details  [/] search  [a] adapters  [?] help  [q] quit "
         }
-        Screen::Details => " [Esc] back  [a] adapters  [?] help  [q] quit ",
+        (Screen::Details, false) => " [Esc] back  [a] adapters  [?] help  [q] quit ",
         _ => " [i] inventory  [Esc] back  [?] help  [q] quit ",
     };
 
@@ -452,6 +468,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("  ← / →, h / l", "same as Tab"),
         ("  Enter", "open the details of the selected component"),
         ("  Esc", "go back, then quit from the inventory"),
+        ("  /", "search by name, identifier, description or source"),
         ("  i / a / ?", "inventory, adapter status, this help"),
         ("  q, Q", "quit (never interrupts a running operation)"),
         ("", ""),

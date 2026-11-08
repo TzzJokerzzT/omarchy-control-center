@@ -13,7 +13,7 @@ use crossterm::event::{self, Event as TerminalEvent, KeyCode, KeyEvent, KeyEvent
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::application::{AdapterRegistry, InventorySnapshot};
+use crate::application::{AdapterRegistry, InventorySnapshot, search};
 use crate::domain::{Component, SourceGroup};
 use crate::infrastructure::system::SystemInfo;
 use crate::term::TerminalSession;
@@ -49,6 +49,10 @@ pub struct UiState {
     pub sidebar_index: usize,
     /// Position inside the filtered component list.
     pub selected: usize,
+    /// Applied search text. Empty means "no search".
+    pub query: String,
+    /// True while the search field is capturing keystrokes.
+    pub searching: bool,
     pub quit: bool,
     pub status_line: String,
 }
@@ -72,6 +76,8 @@ impl UiState {
             group_filter: None,
             sidebar_index: 0,
             selected: 0,
+            query: String::new(),
+            searching: false,
             quit: false,
             status_line,
         }
@@ -104,15 +110,36 @@ impl UiState {
         (entry.map(|group| group.label()).unwrap_or("All"), count)
     }
 
-    /// Components matching the active group filter, in display order.
+    /// Components matching the active group filter and search, in display order.
+    /// A search reorders by score; without a search the inventory order stands.
     pub fn visible(&self) -> Vec<&Component> {
-        self.snapshot
+        let query = self.query.trim();
+        if query.is_empty() {
+            return self
+                .snapshot
+                .components
+                .iter()
+                .filter(|component| {
+                    self.group_filter.is_none_or(|group| component.source.group() == group)
+                })
+                .collect();
+        }
+
+        let mut matched: Vec<(i32, &Component)> = self
+            .snapshot
             .components
             .iter()
             .filter(|component| {
                 self.group_filter.is_none_or(|group| component.source.group() == group)
             })
-            .collect()
+            .filter_map(|component| {
+                search::score_component(query, component).map(|(score, _)| (score, component))
+            })
+            .collect();
+        matched.sort_by(|left, right| {
+            right.0.cmp(&left.0).then_with(|| left.1.sort_key().cmp(&right.1.sort_key()))
+        });
+        matched.into_iter().map(|(_, component)| component).collect()
     }
 
     pub fn selected_component(&self) -> Option<&Component> {
@@ -192,6 +219,27 @@ impl UiState {
     }
 
     fn on_key(&mut self, key: KeyEvent) {
+        if self.searching {
+            match key.code {
+                KeyCode::Esc => {
+                    self.query.clear();
+                    self.searching = false;
+                    self.selected = 0;
+                }
+                KeyCode::Enter => self.searching = false,
+                KeyCode::Backspace => {
+                    self.query.pop();
+                    self.selected = 0;
+                }
+                KeyCode::Char(character) if !character.is_control() => {
+                    self.query.push(character);
+                    self.selected = 0;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => self.quit = true,
             KeyCode::Char('?') => {
@@ -206,6 +254,11 @@ impl UiState {
                     self.quit = true;
                 } else {
                     self.back();
+                }
+            }
+            KeyCode::Char('/') => {
+                if self.screen == Screen::Inventory {
+                    self.searching = true;
                 }
             }
             KeyCode::Char('i') => self.screen = Screen::Inventory,
