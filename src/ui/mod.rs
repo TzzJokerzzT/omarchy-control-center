@@ -4,33 +4,48 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap,
+};
 
-use crate::app::{Screen, UiState};
-use crate::domain::UNAVAILABLE;
+use crate::app::{Focus, Screen, UiState};
+use crate::domain::{AdapterAvailability, Component, UNAVAILABLE, format_size, shown};
 
 const TITLE: &str = " OMARCHY CONTROL CENTER ";
-const FOOTER: &str = " [↑↓] move  [i] inventory  [a] adapters  [?] help  [q] quit ";
+const SIDEBAR_WIDTH: u16 = 24;
+/// Below this width the sidebar is hidden instead of squeezing the list.
+const SIDEBAR_MIN_WIDTH: u16 = 74;
+/// Below this height the details pane is stacked away.
+const DETAILS_MIN_HEIGHT: u16 = 22;
 
-fn muted(text: &str) -> Span<'static> {
-    Span::styled(text.to_string(), Style::new().fg(Color::DarkGray))
+fn muted(text: impl Into<String>) -> Span<'static> {
+    Span::styled(text.into(), Style::new().fg(Color::DarkGray))
+}
+
+fn accent(text: impl Into<String>) -> Span<'static> {
+    Span::styled(text.into(), Style::new().fg(Color::Cyan))
 }
 
 fn semantic(color: Color, text: impl Into<String>) -> Span<'static> {
     Span::styled(text.into(), Style::new().fg(color))
 }
 
+fn bold(text: impl Into<String>) -> Span<'static> {
+    Span::styled(text.into(), Style::new().add_modifier(Modifier::BOLD))
+}
+
 pub fn draw(frame: &mut Frame, state: &UiState) {
     let area = frame.area();
     let layout =
-        Layout::vertical([Constraint::Length(3), Constraint::Min(3), Constraint::Length(1)])
+        Layout::vertical([Constraint::Length(3), Constraint::Min(3), Constraint::Length(2)])
             .split(area);
 
     draw_header(frame, layout[0], state);
     match state.screen {
         Screen::Inventory => draw_inventory(frame, layout[1], state),
+        Screen::Details => draw_details_screen(frame, layout[1], state),
         Screen::Adapters => draw_adapters(frame, layout[1], state),
-        Screen::Help => draw_help(frame, layout[1], state),
+        Screen::Help => draw_help(frame, layout[1]),
     }
     draw_footer(frame, layout[2], state);
 }
@@ -39,6 +54,11 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &UiState) {
     let available = state.snapshot.statuses.iter().filter(|status| status.available()).count();
     let total = state.snapshot.statuses.len();
     let loading = if state.loading { " · loading…" } else { "" };
+    let hidden = if state.group_filter.is_some() {
+        format!(" · filter: {}", state.sidebar_label(state.sidebar_index).0)
+    } else {
+        String::new()
+    };
 
     let mut spans = vec![
         Span::styled(
@@ -47,14 +67,18 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &UiState) {
         ),
         muted("   ·   "),
         Span::styled(
-            format!("adapters {available}/{total} available"),
+            format!("adapters {available}/{total}"),
             Style::new().fg(if available == total { Color::Green } else { Color::Yellow }),
         ),
-        muted(&format!("   ·   {}{loading}", state.system.display_name())),
+        muted(&format!("   ·   {}{hidden}{loading}", state.system.display_name())),
     ];
     if state.read_only {
         spans.push(muted("   ·   "));
         spans.push(semantic(Color::Yellow, "READ-ONLY"));
+    }
+    if state.snapshot.failure_count() > 0 {
+        spans.push(muted("   ·   "));
+        spans.push(semantic(Color::Red, format!("{} adapter issue(s)", state.snapshot.failure_count())));
     }
 
     let block = Block::default()
@@ -67,92 +91,317 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &UiState) {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, state: &UiState) {
-    let text = if state.status_line.is_empty() {
-        Line::from(muted(FOOTER))
-    } else {
-        Line::from(vec![semantic(Color::Yellow, &state.status_line), muted("   "), muted(FOOTER)])
+    let keys = match state.screen {
+        Screen::Inventory => {
+            " [↑↓] move  [Tab] pane  [Enter] details  [a] adapters  [?] help  [q] quit "
+        }
+        Screen::Details => " [Esc] back  [a] adapters  [?] help  [q] quit ",
+        _ => " [i] inventory  [Esc] back  [?] help  [q] quit ",
     };
-    frame.render_widget(Paragraph::new(text), area);
+
+    let status = if !state.status_line.is_empty() {
+        semantic(Color::Yellow, state.status_line.clone())
+    } else if let Some(notice) = state.notices.first() {
+        semantic(Color::Yellow, notice.clone())
+    } else {
+        muted("")
+    };
+
+    frame.render_widget(Paragraph::new(Line::from(status)), Rect { height: 1, ..area });
+    frame.render_widget(
+        Paragraph::new(Line::from(muted(keys))),
+        Rect { y: area.y + 1, height: 1, ..area },
+    );
 }
 
 fn draw_inventory(frame: &mut Frame, area: Rect, state: &UiState) {
-    if state.snapshot.components.is_empty() {
+    let show_sidebar = area.width >= SIDEBAR_MIN_WIDTH;
+    let columns = Layout::horizontal([
+        show_sidebar.then_some(Constraint::Length(SIDEBAR_WIDTH)).unwrap_or(Constraint::Length(0)),
+        Constraint::Min(20),
+    ])
+    .split(area);
+
+    if show_sidebar {
+        draw_sidebar(frame, columns[0], state);
+    }
+    let main = columns[1];
+
+    let show_details = area.height >= DETAILS_MIN_HEIGHT;
+    let rows = Layout::vertical([
+        Constraint::Min(6),
+        show_details.then_some(Constraint::Percentage(42)).unwrap_or(Constraint::Length(0)),
+    ])
+    .split(main);
+
+    draw_list(frame, rows[0], state);
+    if show_details {
+        draw_details_pane(frame, rows[1], state);
+    }
+}
+
+fn draw_sidebar(frame: &mut Frame, area: Rect, state: &UiState) {
+    let entries = state.sidebar_groups();
+    let items: Vec<ListItem> = entries
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            let (label, count) = state.sidebar_label(index);
+            ListItem::new(Line::from(vec![
+                Span::raw(label.to_string()),
+                muted(format!(" {count}")),
+            ]))
+        })
+        .collect();
+
+    let border = if state.focus == Focus::Sidebar { Color::Cyan } else { Color::DarkGray };
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::new().fg(border))
+                .title(" CATEGORIES "),
+        )
+        .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.sidebar_index.min(entries.len().saturating_sub(1))));
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+fn draw_list(frame: &mut Frame, area: Rect, state: &UiState) {
+    let visible = state.visible();
+    let border = if state.focus == Focus::List { Color::Cyan } else { Color::DarkGray };
+    let title = match state.group_filter {
+        Some(group) => format!(" {} ", group.label().to_uppercase()),
+        None => " INSTALLED COMPONENTS ".to_string(),
+    };
+
+    if visible.is_empty() {
         let message = if state.loading {
             "Loading the inventory…"
-        } else {
+        } else if state.snapshot.components.is_empty() {
             "No components were detected. Open the adapters view (a) to see why."
+        } else {
+            "No component in this category."
         };
-        let block = Block::default().borders(Borders::ALL).title(" INSTALLED COMPONENTS ");
-        frame.render_widget(Paragraph::new(message).block(block).wrap(Wrap { trim: true }), area);
+        frame.render_widget(
+            Paragraph::new(message)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::new().fg(border))
+                        .title(title),
+                )
+                .wrap(Wrap { trim: true }),
+            area,
+        );
         return;
     }
 
-    let header = Row::new(vec!["NAME", "VERSION", "SOURCE", "STATUS"]).style(
+    let header = Row::new(vec!["NAME", "VERSION", "SOURCE", "STATE"]).style(
         Style::new().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
     );
-    let rows = state.snapshot.components.iter().map(|component| {
+    let rows = visible.iter().map(|component| {
         Row::new(vec![
             Cell::from(component.name.clone()),
             Cell::from(component.version.clone().unwrap_or_else(|| UNAVAILABLE.to_string())),
             Cell::from(component.source.label()),
-            Cell::from(component.status.label()),
+            Cell::from(state_cell(component)),
         ])
     });
 
     let table = Table::new(
         rows,
-        [Constraint::Percentage(45), Constraint::Percentage(20), Constraint::Percentage(30), Constraint::Min(8)],
+        [
+            Constraint::Percentage(46),
+            Constraint::Percentage(22),
+            Constraint::Percentage(28),
+            Constraint::Min(8),
+        ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title(" INSTALLED COMPONENTS "))
+    .block(
+        Block::default().borders(Borders::ALL).border_style(Style::new().fg(border)).title(title),
+    )
     .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED));
 
     let mut table_state = TableState::default();
-    if !state.snapshot.components.is_empty() {
-        table_state.select(Some(state.selected));
-    }
+    table_state.select(Some(state.selected.min(visible.len().saturating_sub(1))));
     frame.render_stateful_widget(table, area, &mut table_state);
 }
 
-fn draw_adapters(frame: &mut Frame, area: Rect, state: &UiState) {
-    let header = Row::new(vec!["ADAPTER", "STATE", "TOOL", "DETAIL"]).style(
-        Style::new().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+fn state_cell(component: &Component) -> Span<'static> {
+    match component.status {
+        crate::domain::ComponentStatus::Orphan => semantic(Color::Yellow, "orphan"),
+        crate::domain::ComponentStatus::Installed => muted("installed"),
+        crate::domain::ComponentStatus::Unknown => muted("unknown"),
+    }
+}
+
+fn capability_list(component: &Component) -> String {
+    if component.capabilities.is_empty() {
+        return UNAVAILABLE.to_string();
+    }
+    component
+        .capabilities
+        .iter()
+        .map(|capability| capability.label())
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+fn detail_lines(component: &Component) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(vec![bold(component.name.clone()), muted("  "), accent(shown(component.version.as_deref()).to_string())]),
+        Line::from(vec![
+            muted("Source      "),
+            semantic(Color::Green, component.source.label()),
+            muted("   Category  "),
+            Span::raw(component.category.label().to_string()),
+        ]),
+        Line::from(vec![
+            muted("State       "),
+            state_cell(component),
+            muted("   Confidence  "),
+            Span::raw(component.confidence.label().to_string()),
+        ]),
+        Line::from(vec![
+            muted("Size        "),
+            Span::raw(
+                component
+                    .installed_size
+                    .map(format_size)
+                    .unwrap_or_else(|| UNAVAILABLE.to_string()),
+            ),
+            muted("   Installed  "),
+            Span::raw(shown(component.installed_at.as_deref()).to_string()),
+        ]),
+        Line::from(vec![
+            muted("Location    "),
+            Span::raw(
+                component
+                    .location
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| UNAVAILABLE.to_string()),
+            ),
+        ]),
+        Line::from(vec![
+            muted("Capabilities  "),
+            Span::raw(capability_list(component)),
+        ]),
+        Line::from(vec![
+            muted("Depends on  "),
+            Span::raw(summarise(&component.depends_on)),
+        ]),
+        Line::from(vec![
+            muted("Required by "),
+            Span::raw(summarise(&component.required_by)),
+        ]),
+        Line::from(vec![muted("Detected by "), muted(component.detection.label())]),
+    ];
+
+    if let Some(description) = &component.description {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::raw(description.clone())));
+    }
+    for field in &component.extra {
+        lines.push(Line::from(vec![
+            muted(format!("{:<13}", field.label)),
+            Span::raw(field.value.clone()),
+        ]));
+    }
+    lines
+}
+
+/// Shows the first few entries and says how many were left out, instead of
+/// pretending the list was complete.
+fn summarise(items: &[String]) -> String {
+    if items.is_empty() {
+        return "none".to_string();
+    }
+    const LIMIT: usize = 6;
+    if items.len() <= LIMIT {
+        return items.join(", ");
+    }
+    format!("{} … (+{} more)", items[..LIMIT].join(", "), items.len() - LIMIT)
+}
+
+fn draw_details_pane(frame: &mut Frame, area: Rect, state: &UiState) {
+    let block = Block::default().borders(Borders::ALL).title(" SELECTED ");
+    let Some(component) = state.selected_component() else {
+        frame.render_widget(Paragraph::new("Nothing selected").block(block), area);
+        return;
+    };
+    let lines = detail_lines(component);
+    frame.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), area);
+}
+
+fn draw_details_screen(frame: &mut Frame, area: Rect, state: &UiState) {
+    let Some(component) = state.selected_component() else {
+        frame.render_widget(
+            Paragraph::new("Nothing selected").block(Block::default().borders(Borders::ALL)),
+            area,
+        );
+        return;
+    };
+    frame.render_widget(
+        Paragraph::new(detail_lines(component))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::new().fg(Color::Cyan))
+                    .title(" DETAILS "),
+            )
+            .wrap(Wrap { trim: false }),
+        area,
     );
+}
+
+fn draw_adapters(frame: &mut Frame, area: Rect, state: &UiState) {
+    let header =
+        Row::new(vec!["ADAPTER", "STATE", "TOOL", "DETAIL"]).style(
+            Style::new().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        );
 
     let rows = state.snapshot.statuses.iter().map(|status| {
         let (state_text, color) = match &status.availability {
-            crate::domain::AdapterAvailability::Available => ("available", Color::Green),
-            crate::domain::AdapterAvailability::Unavailable { .. } => ("unavailable", Color::Yellow),
+            AdapterAvailability::Available => ("available", Color::Green),
+            AdapterAvailability::Unavailable { .. } => ("unavailable", Color::Yellow),
         };
         let detail = match &status.availability {
-            crate::domain::AdapterAvailability::Available => {
-                status.notes.first().cloned().unwrap_or_default()
-            }
-            crate::domain::AdapterAvailability::Unavailable { reason } => reason.clone(),
+            AdapterAvailability::Available => status.notes.join(" · "),
+            AdapterAvailability::Unavailable { reason } => reason.clone(),
+        };
+        let tool = match (&status.tool, &status.tool_version) {
+            (Some(path), Some(version)) => format!("{} ({version})", path.display()),
+            (Some(path), None) => path.display().to_string(),
+            _ => UNAVAILABLE.to_string(),
         };
         Row::new(vec![
             Cell::from(status.display_name.clone()),
             Cell::from(Span::styled(state_text, Style::new().fg(color))),
-            Cell::from(
-                status.tool.as_ref().map(|path| path.display().to_string()).unwrap_or_else(|| UNAVAILABLE.to_string()),
-            ),
+            Cell::from(tool),
             Cell::from(detail),
         ])
     });
 
     let table = Table::new(
         rows,
-        [Constraint::Length(18), Constraint::Length(13), Constraint::Percentage(35), Constraint::Min(20)],
+        [
+            Constraint::Length(16),
+            Constraint::Length(12),
+            Constraint::Percentage(36),
+            Constraint::Min(20),
+        ],
     )
     .header(header)
     .block(Block::default().borders(Borders::ALL).title(" ADAPTERS "));
 
     frame.render_widget(table, area);
 
-    if !state.snapshot.failures.is_empty() {
-        let height = (state.snapshot.failures.len() as u16 + 2).min(area.height.saturating_sub(2));
-        let failures_area =
-            Rect { x: area.x, y: area.y + area.height.saturating_sub(height), width: area.width, height };
+    if state.snapshot.failure_count() > 0 {
         let lines: Vec<Line> = state
             .snapshot
             .failures
@@ -160,35 +409,83 @@ fn draw_adapters(frame: &mut Frame, area: Rect, state: &UiState) {
             .map(|failure| {
                 Line::from(vec![
                     semantic(Color::Red, format!("{} ", failure.adapter)),
-                    muted(&format!("{}: ", failure.stage)),
+                    muted(format!("{}: ", failure.stage)),
                     Span::raw(failure.message.clone()),
                 ])
             })
+            .chain(state.snapshot.duplicates.iter().map(|duplicate| {
+                Line::from(vec![
+                    semantic(Color::Yellow, "duplicate identity "),
+                    Span::raw(duplicate.id.to_string()),
+                    muted(format!(" kept by {}, rejected from {}", duplicate.kept, duplicate.rejected)),
+                ])
+            }))
             .collect();
-        frame.render_widget(Clear, failures_area);
+
+        let height = (lines.len() as u16 + 2).min(area.height.saturating_sub(2)).max(3);
+        let failure_area = Rect {
+            x: area.x,
+            y: area.y + area.height.saturating_sub(height),
+            width: area.width,
+            height,
+        };
+        frame.render_widget(Clear, failure_area);
         frame.render_widget(
             Paragraph::new(lines)
-                .block(Block::default().borders(Borders::ALL).title(" ADAPTER FAILURES ").border_style(Style::new().fg(Color::Red)))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::new().fg(Color::Red))
+                        .title(" ADAPTER ISSUES "),
+                )
                 .wrap(Wrap { trim: true }),
-            failures_area,
+            failure_area,
         );
     }
 }
 
-fn draw_help(frame: &mut Frame, area: Rect, _state: &UiState) {
-    let lines = vec![
-        Line::from(vec![semantic(Color::Cyan, "Navigation")]),
-        Line::from("  ↑ / ↓, k / j   move through the list"),
-        Line::from("  i              inventory"),
-        Line::from("  a              adapter status"),
-        Line::from("  ?              this help"),
-        Line::from("  q, Q, Esc      quit"),
-        Line::from(""),
-        Line::from(vec![semantic(Color::Cyan, "States")]),
-        Line::from("  available      the tool was found and can be queried"),
-        Line::from("  unavailable    the tool is missing; the reason is shown, nothing else breaks"),
-        Line::from(format!("  {UNAVAILABLE:<14} the source does not provide this value")),
+fn draw_help(frame: &mut Frame, area: Rect) {
+    let rows = [
+        ("Navigation", ""),
+        ("  ↑ / ↓, k / j", "move inside the focused pane"),
+        ("  Tab", "switch between the category sidebar and the list"),
+        ("  ← / →, h / l", "same as Tab"),
+        ("  Enter", "open the details of the selected component"),
+        ("  Esc", "go back, then quit from the inventory"),
+        ("  i / a / ?", "inventory, adapter status, this help"),
+        ("  q, Q", "quit (never interrupts a running operation)"),
+        ("", ""),
+        ("Reading the list", ""),
+        ("  STATE", "installed or orphan; orphans are informative only"),
+        ("  SOURCE", "the manager that owns the component: pacman, AUR/foreign, flatpak"),
+        ("", ""),
+        ("Honest facts", ""),
+        ("  No disponible", "the source does not provide this value"),
+        ("  unavailable", "the tool is not installed; the reason is shown and nothing else breaks"),
+        ("  Detection", "the exact command that produced the fact"),
+        ("", ""),
+        ("Safety", ""),
+        ("  read-only", "start with --read-only to hide every destructive action"),
+        ("  confirmation", "destructive actions always show a plan and require the exact name"),
     ];
-    let block = Block::default().borders(Borders::ALL).title(" HELP ");
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+
+    let lines: Vec<Line> = rows
+        .iter()
+        .map(|(key, description)| {
+            if key.is_empty() {
+                Line::from("")
+            } else if description.is_empty() {
+                Line::from(accent(*key))
+            } else {
+                Line::from(vec![bold(format!("{key:<20}")), Span::raw(*description)])
+            }
+        })
+        .collect();
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title(" HELP "))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }

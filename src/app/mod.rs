@@ -14,6 +14,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::application::{AdapterRegistry, InventorySnapshot};
+use crate::domain::{Component, SourceGroup};
 use crate::infrastructure::system::SystemInfo;
 use crate::term::TerminalSession;
 use crate::ui;
@@ -21,8 +22,16 @@ use crate::ui;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Inventory,
+    Details,
     Adapters,
     Help,
+}
+
+/// Which pane owns the arrow keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Sidebar,
+    List,
 }
 
 pub struct UiState {
@@ -32,7 +41,13 @@ pub struct UiState {
     pub snapshot: InventorySnapshot,
     pub screen: Screen,
     pub previous_screen: Screen,
+    pub focus: Focus,
     pub loading: bool,
+    /// `None` means "all groups".
+    pub group_filter: Option<SourceGroup>,
+    /// Position inside the sidebar list, index 0 being "All".
+    pub sidebar_index: usize,
+    /// Position inside the filtered component list.
     pub selected: usize,
     pub quit: bool,
     pub status_line: String,
@@ -40,10 +55,11 @@ pub struct UiState {
 
 impl UiState {
     pub fn new(system: SystemInfo, read_only: bool, notices: Vec<String>) -> Self {
-        let mut status_line = String::new();
-        if read_only {
-            status_line = "read-only mode: destructive actions are disabled".to_string();
-        }
+        let status_line = if read_only {
+            "read-only mode: destructive actions are disabled".to_string()
+        } else {
+            String::new()
+        };
         Self {
             system,
             read_only,
@@ -51,11 +67,56 @@ impl UiState {
             snapshot: InventorySnapshot::default(),
             screen: Screen::Inventory,
             previous_screen: Screen::Inventory,
+            focus: Focus::List,
             loading: true,
+            group_filter: None,
+            sidebar_index: 0,
             selected: 0,
             quit: false,
             status_line,
         }
+    }
+
+    /// Sidebar entries: "All" followed by the groups that actually have components.
+    pub fn sidebar_groups(&self) -> Vec<Option<SourceGroup>> {
+        let mut groups: Vec<SourceGroup> = self
+            .snapshot
+            .components
+            .iter()
+            .map(|component| component.source.group())
+            .collect();
+        groups.sort();
+        groups.dedup();
+        let mut entries = vec![None];
+        entries.extend(groups.into_iter().map(Some));
+        entries
+    }
+
+    pub fn sidebar_label(&self, index: usize) -> (&'static str, usize) {
+        let groups = self.sidebar_groups();
+        let entry = groups.get(index).copied().flatten();
+        let count = self
+            .snapshot
+            .components
+            .iter()
+            .filter(|component| entry.is_none() || Some(component.source.group()) == entry)
+            .count();
+        (entry.map(|group| group.label()).unwrap_or("All"), count)
+    }
+
+    /// Components matching the active group filter, in display order.
+    pub fn visible(&self) -> Vec<&Component> {
+        self.snapshot
+            .components
+            .iter()
+            .filter(|component| {
+                self.group_filter.is_none_or(|group| component.source.group() == group)
+            })
+            .collect()
+    }
+
+    pub fn selected_component(&self) -> Option<&Component> {
+        self.visible().get(self.selected).copied()
     }
 
     fn apply(&mut self, message: Message) {
@@ -66,7 +127,7 @@ impl UiState {
                 self.clamp_selection();
                 if self.snapshot.components.is_empty() && self.snapshot.failure_count() > 0 {
                     self.status_line =
-                        "no component could be loaded: see the adapters view".to_string();
+                        "no component could be loaded: open the adapters view (a)".to_string();
                 }
             }
             Message::Failed(message) => {
@@ -77,28 +138,56 @@ impl UiState {
     }
 
     fn clamp_selection(&mut self) {
-        let count = self.snapshot.components.len();
+        let count = self.visible().len();
         if count == 0 {
             self.selected = 0;
         } else if self.selected >= count {
             self.selected = count - 1;
         }
-    }
-
-    pub fn selected_component(&self) -> Option<&crate::domain::Component> {
-        self.snapshot.components.get(self.selected)
-    }
-
-    fn open_help(&mut self) {
-        if self.screen != Screen::Help {
-            self.previous_screen = self.screen;
-            self.screen = Screen::Help;
+        let groups = self.sidebar_groups().len();
+        if self.sidebar_index >= groups {
+            self.sidebar_index = groups.saturating_sub(1);
         }
     }
 
-    fn close_help(&mut self) {
-        if self.screen == Screen::Help {
-            self.screen = self.previous_screen;
+    fn toggle_focus(&mut self) {
+        self.focus = match self.focus {
+            Focus::Sidebar => Focus::List,
+            Focus::List => Focus::Sidebar,
+        };
+    }
+
+    fn move_sidebar(&mut self, delta: isize) {
+        let count = self.sidebar_groups().len();
+        if count == 0 {
+            return;
+        }
+        let next = self.sidebar_index as isize + delta;
+        self.sidebar_index = next.clamp(0, count as isize - 1) as usize;
+        self.group_filter = self.sidebar_groups().get(self.sidebar_index).copied().flatten();
+        self.selected = 0;
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let count = self.visible().len();
+        if count == 0 {
+            return;
+        }
+        let next = self.selected as isize + delta;
+        self.selected = next.clamp(0, count as isize - 1) as usize;
+    }
+
+    fn open(&mut self, screen: Screen) {
+        if self.screen != screen {
+            self.previous_screen = self.screen;
+            self.screen = screen;
+        }
+    }
+
+    fn back(&mut self) {
+        match self.screen {
+            Screen::Inventory => {}
+            _ => self.screen = self.previous_screen,
         }
     }
 
@@ -107,27 +196,56 @@ impl UiState {
             KeyCode::Char('q') | KeyCode::Char('Q') => self.quit = true,
             KeyCode::Char('?') => {
                 if self.screen == Screen::Help {
-                    self.close_help();
+                    self.back();
                 } else {
-                    self.open_help();
+                    self.open(Screen::Help);
                 }
             }
             KeyCode::Esc => {
-                if self.screen == Screen::Help {
-                    self.close_help();
-                } else {
+                if self.screen == Screen::Inventory {
                     self.quit = true;
+                } else {
+                    self.back();
                 }
             }
             KeyCode::Char('i') => self.screen = Screen::Inventory,
-            KeyCode::Char('a') => self.screen = Screen::Adapters,
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
+            KeyCode::Char('a') => self.open(Screen::Adapters),
+            KeyCode::Tab | KeyCode::BackTab => {
+                if self.screen == Screen::Inventory {
+                    self.toggle_focus();
+                }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let count = self.snapshot.components.len();
-                if count > 0 && self.selected + 1 < count {
-                    self.selected += 1;
+            KeyCode::Enter => {
+                if self.screen == Screen::Inventory {
+                    match self.focus {
+                        Focus::Sidebar => self.focus = Focus::List,
+                        Focus::List if self.selected_component().is_some() => {
+                            self.open(Screen::Details)
+                        }
+                        Focus::List => {}
+                    }
+                } else if self.screen == Screen::Details {
+                    self.back();
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => match (self.screen, self.focus) {
+                (Screen::Inventory, Focus::Sidebar) => self.move_sidebar(-1),
+                (Screen::Inventory, Focus::List) => self.move_selection(-1),
+                _ => {}
+            },
+            KeyCode::Down | KeyCode::Char('j') => match (self.screen, self.focus) {
+                (Screen::Inventory, Focus::Sidebar) => self.move_sidebar(1),
+                (Screen::Inventory, Focus::List) => self.move_selection(1),
+                _ => {}
+            },
+            KeyCode::Right | KeyCode::Char('l') => {
+                if self.screen == Screen::Inventory && self.focus == Focus::Sidebar {
+                    self.focus = Focus::List;
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                if self.screen == Screen::Inventory && self.focus == Focus::List {
+                    self.focus = Focus::Sidebar;
                 }
             }
             _ => {}
@@ -187,8 +305,7 @@ fn event_loop(
         loop {
             match receiver.try_recv() {
                 Ok(message) => state.apply(message),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
         }
 
