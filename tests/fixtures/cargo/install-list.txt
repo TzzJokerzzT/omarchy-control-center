@@ -1,0 +1,6 @@
+ripgrep v14.1.0:
+    rg
+just v1.36.0:
+    just
+cargo-binstall v1.12.3:
+    cargo-binstall

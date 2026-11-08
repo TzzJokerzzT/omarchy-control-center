@@ -1,0 +1,15 @@
+# oh-my-zsh configuration with the plugin list spread over several lines,
+# which is the shape people end up with after a few manual additions.
+
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="tokyonight"
+
+plugins=(
+  git
+  fzf-tab
+  zsh-autosuggestions   # completion from history
+  zsh-syntax-highlighting
+  zoxide
+)
+
+source $ZSH/oh-my-zsh.sh

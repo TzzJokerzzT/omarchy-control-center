@@ -1,0 +1,4 @@
+Description=Voxtype dictation daemon
+ActiveState=inactive
+FragmentPath=/home/alex/.config/systemd/user/voxtype.service
+UnitFileState=disabled

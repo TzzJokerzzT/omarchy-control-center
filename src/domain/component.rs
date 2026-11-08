@@ -62,6 +62,12 @@ pub enum ComponentCategory {
     Application,
     Runtime,
     Plugin,
+    Tool,
+    Service,
+    Font,
+    Theme,
+    Icon,
+    Configuration,
 }
 
 impl ComponentCategory {
@@ -71,6 +77,12 @@ impl ComponentCategory {
             Self::Application => "Application",
             Self::Runtime => "Runtime",
             Self::Plugin => "Plugin",
+            Self::Tool => "Tool",
+            Self::Service => "Service",
+            Self::Font => "Font",
+            Self::Theme => "Theme",
+            Self::Icon => "Icon theme",
+            Self::Configuration => "Configuration",
         }
     }
 }
@@ -121,6 +133,47 @@ pub enum ComponentSource {
     OmarchyPlugin {
         first_party: bool,
     },
+    /// A plugin declared in `lazy-lock.json`; `downloaded` is false when the lock
+    /// entry has no directory on disk.
+    LazyNvim {
+        downloaded: bool,
+    },
+    Zsh {
+        managed_by: ZshManager,
+    },
+    /// Something a Hyprland configuration references, never a package by itself.
+    Hyprland {
+        reference_kind: String,
+    },
+    Cargo,
+    Python {
+        manager: String,
+    },
+    Systemd {
+        scope: InstallScope,
+    },
+    Resource {
+        resource_kind: ResourceKind,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZshManager {
+    /// A plugin that ships with the oh-my-zsh framework.
+    OhMyZsh,
+    /// A clone under `custom/plugins`, owned by the user.
+    CustomClone,
+    /// Referenced by the configuration but not owned by any manager.
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceKind {
+    Font,
+    Theme,
+    IconTheme,
 }
 
 impl ComponentSource {
@@ -142,6 +195,29 @@ impl ComponentSource {
             Self::Flatpak { scope } => format!("flatpak / {}", scope.label()),
             Self::OmarchyPlugin { first_party: true } => "omarchy / first-party".to_string(),
             Self::OmarchyPlugin { first_party: false } => "omarchy / third-party".to_string(),
+            Self::LazyNvim { .. } => "neovim / lazy.nvim".to_string(),
+            Self::Zsh {
+                managed_by: ZshManager::OhMyZsh,
+            } => "zsh / oh-my-zsh".to_string(),
+            Self::Zsh {
+                managed_by: ZshManager::CustomClone,
+            } => "zsh / custom clone".to_string(),
+            Self::Zsh {
+                managed_by: ZshManager::Manual,
+            } => "zsh / manual".to_string(),
+            Self::Hyprland { reference_kind } => format!("hyprland / {reference_kind}"),
+            Self::Cargo => "cargo".to_string(),
+            Self::Python { manager } => format!("python / {manager}"),
+            Self::Systemd { scope } => format!("systemd / {}", scope.label()),
+            Self::Resource {
+                resource_kind: ResourceKind::Font,
+            } => "font".to_string(),
+            Self::Resource {
+                resource_kind: ResourceKind::Theme,
+            } => "theme".to_string(),
+            Self::Resource {
+                resource_kind: ResourceKind::IconTheme,
+            } => "icon theme".to_string(),
         }
     }
 
@@ -157,6 +233,13 @@ impl ComponentSource {
             Self::Aur { .. } => SourceGroup::Foreign,
             Self::Flatpak { .. } => SourceGroup::Flatpak,
             Self::OmarchyPlugin { .. } => SourceGroup::OmarchyPlugins,
+            Self::LazyNvim { .. } => SourceGroup::Neovim,
+            Self::Zsh { .. } => SourceGroup::Zsh,
+            Self::Hyprland { .. } => SourceGroup::Hyprland,
+            Self::Cargo => SourceGroup::Cargo,
+            Self::Python { .. } => SourceGroup::Python,
+            Self::Systemd { .. } => SourceGroup::Services,
+            Self::Resource { .. } => SourceGroup::Resources,
         }
     }
 }
@@ -169,6 +252,13 @@ pub enum SourceGroup {
     Foreign,
     Flatpak,
     OmarchyPlugins,
+    Neovim,
+    Zsh,
+    Hyprland,
+    Cargo,
+    Python,
+    Services,
+    Resources,
 }
 
 impl SourceGroup {
@@ -178,6 +268,13 @@ impl SourceGroup {
             Self::Foreign => "AUR / foreign",
             Self::Flatpak => "Flatpak",
             Self::OmarchyPlugins => "Omarchy plugins",
+            Self::Neovim => "Neovim plugins",
+            Self::Zsh => "Zsh",
+            Self::Hyprland => "Hyprland",
+            Self::Cargo => "Cargo tools",
+            Self::Python => "Python tools",
+            Self::Services => "Services",
+            Self::Resources => "Fonts & themes",
         }
     }
 }
@@ -188,6 +285,11 @@ pub enum ComponentStatus {
     Installed,
     Enabled,
     Disabled,
+    Active,
+    Inactive,
+    /// Configured somewhere but not present on disk (for example a plugin the
+    /// configuration references whose directory was never downloaded).
+    Missing,
     Orphan,
     Unknown,
 }

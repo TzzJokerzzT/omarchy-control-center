@@ -317,6 +317,9 @@ fn state_cell(component: &Component) -> Span<'static> {
     match component.status {
         crate::domain::ComponentStatus::Enabled => semantic(Color::Green, "enabled"),
         crate::domain::ComponentStatus::Disabled => muted("disabled"),
+        crate::domain::ComponentStatus::Active => semantic(Color::Green, "active"),
+        crate::domain::ComponentStatus::Inactive => muted("inactive"),
+        crate::domain::ComponentStatus::Missing => semantic(Color::Yellow, "missing"),
         crate::domain::ComponentStatus::Orphan => semantic(Color::Yellow, "orphan"),
         crate::domain::ComponentStatus::Installed => muted("installed"),
         crate::domain::ComponentStatus::Unknown => muted("unknown"),

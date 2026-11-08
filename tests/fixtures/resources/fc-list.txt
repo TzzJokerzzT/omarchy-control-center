@@ -1,0 +1,4 @@
+/usr/share/fonts/noto/NotoSansTaiLe-Regular.ttf: Noto Sans Tai Le:style=Regular
+/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf: JetBrainsMono Nerd Font:style=Regular
+/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Bold.ttf: JetBrainsMono Nerd Font:style=Bold
+/usr/share/fonts/omarchy/omarchy.ttf: omarchy:style=Regular

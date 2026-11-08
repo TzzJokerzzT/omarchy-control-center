@@ -1,0 +1,13 @@
+# oh-my-zsh configuration, as written by the installer and edited by hand.
+
+export ZSH="$HOME/.oh-my-zsh"
+
+ZSH_THEME="robbyrussell"
+
+# Which plugins would you like to load?
+# Standard plugins can be found in $ZSH/plugins/
+# Custom plugins may be added to $ZSH/custom/plugins/
+plugins=(git zsh-autosuggestions zsh-syntax-highlighting)
+# plugins=(docker kubectl)  must never be listed: the assignment is commented out
+
+source $ZSH/oh-my-zsh.sh

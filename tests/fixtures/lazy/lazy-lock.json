@@ -1,0 +1,6 @@
+{
+  "LuaSnip": { "branch": "master", "commit": "8b3d5ac8b3846d7a6ef4a5fcb6a1d0a35f3ba1a7" },
+  "nvim-treesitter": { "branch": "master", "commit": "42fc28ba918343ebfd5565147a42a26580579482" },
+  "plenary.nvim": { "branch": "master", "commit": "2d9b17e1819a1a4c6e8b2f9f6f2c1b0a1c2d3e4f" },
+  "telescope.nvim": { "branch": "0.1.x", "commit": "a0bbec21143c7bc5f8bb02e0ae5e8d2f2c0f3f3a" }
+}

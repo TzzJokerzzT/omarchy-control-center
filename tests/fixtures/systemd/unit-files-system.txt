@@ -1,0 +1,8 @@
+NetworkManager.service                        enabled         enabled
+alsa-restore.service                          static          -
+auditd.service                                enabled         enabled
+bluetooth.service                             disabled        enabled
+cups.service                                  disabled        enabled
+pacman-init.service                           disabled        enabled
+systemd-journald.service                      static          -
+voxtype.service                               enabled         enabled

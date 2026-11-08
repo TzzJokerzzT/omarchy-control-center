@@ -1,0 +1,5 @@
+  dbus.service                                  loaded    active   running D-Bus User Message Bus
+  gpg-agent.service                             loaded    inactive dead    GnuPG cryptographic agent and passphrase cache
+  pipewire.service                              loaded    active   running PipeWire Multimedia Service
+  voxtype.service                               loaded    inactive dead    Voxtype dictation daemon
+  wireplumber.service                           loaded    active   running Multimedia Service Session Manager

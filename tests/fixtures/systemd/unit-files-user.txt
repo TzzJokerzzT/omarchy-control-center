@@ -1,0 +1,5 @@
+dbus.service                                  static          -
+gpg-agent.service                             disabled        enabled
+pipewire.service                              enabled         enabled
+voxtype.service                               disabled        enabled
+wireplumber.service                           enabled         enabled

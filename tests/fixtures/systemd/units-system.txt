@@ -1,0 +1,8 @@
+  NetworkManager.service                        loaded    active   running Network Manager
+  alsa-restore.service                          loaded    active   exited  Save/Restore Sound Card State
+  auditd.service                                loaded    active   running Security Audit Logging Service
+  bluetooth.service                             loaded    active   running Bluetooth service
+● cups.service                                  loaded    failed   failed  CUPS Scheduler
+  pacman-init.service                           loaded    inactive dead    Initializes Pacman keyring
+  systemd-journald.service                      loaded    active   running Journal Service
+  voxtype.service                               loaded    active   running Voxtype dictation daemon
