@@ -18,6 +18,15 @@ use thiserror::Error;
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Serializes fixture writes against child spawns in tests only.
+///
+/// A thread that has a fixture file open for writing, while another thread forks,
+/// lets the forked child inherit that write descriptor; the kernel then answers
+/// `ETXTBSY` for an `execve` of the same file. That is a property of the testing
+/// harness, not of the product, so the guard exists only under `cfg(test)`.
+#[cfg(test)]
+pub static FIXTURE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ProcessError {
     #[error("{program} was not found in the executable search path")]
@@ -180,6 +189,10 @@ impl SystemRunner {
     }
 
     fn run_inner(&self, spec: &CommandSpec) -> Result<CommandOutput, ProcessError> {
+        #[cfg(test)]
+        let _fixture_guard = FIXTURE_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         validate_program_name(&spec.program)?;
         let mut command = self.build(spec)?;
         let mut child = command.spawn().map_err(|error| ProcessError::Spawn {
@@ -343,6 +356,10 @@ mod tests {
 
     impl TestBin {
         fn new(name: &str, script: &str) -> Self {
+            // The write must not overlap another test's fork: see FIXTURE_LOCK.
+            let _guard = FIXTURE_LOCK
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let dir =
                 std::env::temp_dir().join(format!("occ-proc-{}-{}", std::process::id(), name));
             let _ = fs::remove_dir_all(&dir);
