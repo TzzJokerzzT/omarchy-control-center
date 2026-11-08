@@ -196,8 +196,8 @@ mod tests {
     fn rows(text: &str) -> Vec<ListRow> {
         parse_list(text)
             .into_iter()
-            .filter_map(|row| match row {
-                ParsedRow::Row(row) => Some(row),
+            .map(|row| match row {
+                ParsedRow::Row(row) => row,
                 ParsedRow::Skipped { reason, .. } => panic!("unexpected skip: {reason}"),
             })
             .collect()

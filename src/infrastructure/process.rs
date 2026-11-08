@@ -12,7 +12,6 @@ use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
@@ -32,9 +31,6 @@ pub enum ProcessError {
 
     #[error("{program} exceeded its {seconds}s deadline and was killed")]
     Timeout { program: String, seconds: u64 },
-
-    #[error("{program} was cancelled")]
-    Cancelled { program: String },
 }
 
 /// How the child's stdio is wired.
@@ -66,7 +62,12 @@ impl CommandSpec {
     }
 
     pub fn interactive(program: impl Into<String>, args: Vec<String>) -> Self {
-        Self { program: program.into(), args, timeout: None, output: OutputMode::Inherit }
+        Self {
+            program: program.into(),
+            args,
+            timeout: None,
+            output: OutputMode::Inherit,
+        }
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
@@ -103,26 +104,6 @@ pub trait CommandRunner: Send + Sync {
     fn resolve(&self, program: &str) -> Option<PathBuf>;
 
     fn run(&self, spec: &CommandSpec) -> Result<CommandOutput, ProcessError>;
-
-    fn run_with_cancel(
-        &self,
-        spec: &CommandSpec,
-        cancel: Option<&AtomicBool>,
-    ) -> Result<CommandOutput, ProcessError> {
-        match cancel {
-            Some(cancel) => self.run_cancellable(spec, cancel),
-            None => self.run(spec),
-        }
-    }
-
-    fn run_cancellable(
-        &self,
-        spec: &CommandSpec,
-        cancel: &AtomicBool,
-    ) -> Result<CommandOutput, ProcessError> {
-        let _ = cancel;
-        self.run(spec)
-    }
 }
 
 /// Real runner. `path` is injectable so tests never depend on the host tools.
@@ -136,16 +117,29 @@ impl SystemRunner {
         Self { path: None }
     }
 
-    /// Prepends `dir` to the inherited search path.
-    pub fn with_extra_path(dir: impl AsRef<Path>) -> Self {
-        let mut dirs: Vec<PathBuf> = vec![dir.as_ref().to_path_buf()];
-        dirs.extend(std::env::split_paths(&Self::inherited_path()));
-        Self { path: Some(std::env::join_paths(dirs).unwrap_or_default()) }
+    /// Prepends `dirs` to the inherited search path, keeping their order: the first
+    /// directory that provides a program wins.
+    pub fn with_extra_paths<I>(dirs: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<Path>,
+    {
+        let mut search: Vec<PathBuf> = dirs
+            .into_iter()
+            .map(|dir| dir.as_ref().to_path_buf())
+            .collect();
+        search.extend(std::env::split_paths(&Self::inherited_path()));
+        Self {
+            path: Some(std::env::join_paths(search).unwrap_or_default()),
+        }
     }
 
     /// Uses exactly `path`, ignoring the environment.
+    #[cfg(test)]
     pub fn with_path(path: impl Into<OsString>) -> Self {
-        Self { path: Some(path.into()) }
+        Self {
+            path: Some(path.into()),
+        }
     }
 
     fn inherited_path() -> OsString {
@@ -159,7 +153,9 @@ impl SystemRunner {
     fn build(&self, spec: &CommandSpec) -> Result<Command, ProcessError> {
         let resolved = self
             .resolve(&spec.program)
-            .ok_or_else(|| ProcessError::NotFound { program: spec.program.clone() })?;
+            .ok_or_else(|| ProcessError::NotFound {
+                program: spec.program.clone(),
+            })?;
 
         let mut command = Command::new(resolved);
         command.args(&spec.args);
@@ -168,20 +164,22 @@ impl SystemRunner {
         command.env("LC_ALL", "C");
         match spec.output {
             OutputMode::Capture => {
-                command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+                command
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
             }
             OutputMode::Inherit => {
-                command.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+                command
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit());
             }
         }
         Ok(command)
     }
 
-    fn run_inner(
-        &self,
-        spec: &CommandSpec,
-        cancel: Option<&AtomicBool>,
-    ) -> Result<CommandOutput, ProcessError> {
+    fn run_inner(&self, spec: &CommandSpec) -> Result<CommandOutput, ProcessError> {
         validate_program_name(&spec.program)?;
         let mut command = self.build(spec)?;
         let mut child = command.spawn().map_err(|error| ProcessError::Spawn {
@@ -233,11 +231,6 @@ impl SystemRunner {
                 }
             }
 
-            if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-                kill_and_reap(&mut child, stdout_reader, stderr_reader);
-                return Err(ProcessError::Cancelled { program: spec.program.clone() });
-            }
-
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 kill_and_reap(&mut child, stdout_reader, stderr_reader);
                 return Err(ProcessError::Timeout {
@@ -274,7 +267,9 @@ fn kill_and_reap(
 }
 
 fn join_reader(handle: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
-    handle.and_then(|handle| handle.join().ok()).unwrap_or_default()
+    handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default()
 }
 
 impl CommandRunner for SystemRunner {
@@ -283,15 +278,7 @@ impl CommandRunner for SystemRunner {
     }
 
     fn run(&self, spec: &CommandSpec) -> Result<CommandOutput, ProcessError> {
-        self.run_inner(spec, None)
-    }
-
-    fn run_cancellable(
-        &self,
-        spec: &CommandSpec,
-        cancel: &AtomicBool,
-    ) -> Result<CommandOutput, ProcessError> {
-        self.run_inner(spec, Some(cancel))
+        self.run_inner(spec)
     }
 }
 
@@ -349,7 +336,6 @@ mod tests {
     use super::*;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::sync::atomic::AtomicBool;
 
     struct TestBin {
         dir: PathBuf,
@@ -357,11 +343,8 @@ mod tests {
 
     impl TestBin {
         fn new(name: &str, script: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "occ-proc-{}-{}",
-                std::process::id(),
-                name
-            ));
+            let dir =
+                std::env::temp_dir().join(format!("occ-proc-{}-{}", std::process::id(), name));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).expect("create fixture dir");
             let file = dir.join(name);
@@ -388,7 +371,10 @@ mod tests {
     #[test]
     fn captures_stdout_and_a_zero_exit_code() {
         let bin = TestBin::new("hello", "#!/bin/sh\necho hello\nexit 0\n");
-        let output = bin.runner().run(&CommandSpec::capture("hello", vec![])).expect("run");
+        let output = bin
+            .runner()
+            .run(&CommandSpec::capture("hello", vec![]))
+            .expect("run");
         assert_eq!(output.stdout.trim(), "hello");
         assert_eq!(output.exit_code, Some(0));
         assert!(output.success());
@@ -397,7 +383,10 @@ mod tests {
     #[test]
     fn a_non_zero_exit_code_is_never_success() {
         let bin = TestBin::new("failing", "#!/bin/sh\necho oops >&2\nexit 7\n");
-        let output = bin.runner().run(&CommandSpec::capture("failing", vec![])).expect("run");
+        let output = bin
+            .runner()
+            .run(&CommandSpec::capture("failing", vec![]))
+            .expect("run");
         assert_eq!(output.exit_code, Some(7));
         assert!(!output.success());
         assert_eq!(output.stderr.trim(), "oops");
@@ -425,8 +414,11 @@ mod tests {
             hostile.iter().map(|arg| (*arg).to_string()).collect(),
         );
         let output = bin.runner().run(&spec).expect("run");
-        let expected: String =
-            hostile.iter().map(|arg| format!("[{arg}]\n")).collect::<Vec<_>>().concat();
+        let expected: String = hostile
+            .iter()
+            .map(|arg| format!("[{arg}]\n"))
+            .collect::<Vec<_>>()
+            .concat();
         assert_eq!(output.stdout, expected);
         assert!(!Path::new("/tmp/occ-should-not-exist").exists());
     }
@@ -434,8 +426,16 @@ mod tests {
     #[test]
     fn a_missing_program_is_reported_as_not_found() {
         let bin = TestBin::new("present", "#!/bin/sh\nexit 0\n");
-        let error = bin.runner().run(&CommandSpec::capture("absent-tool", vec![])).unwrap_err();
-        assert_eq!(error, ProcessError::NotFound { program: "absent-tool".to_string() });
+        let error = bin
+            .runner()
+            .run(&CommandSpec::capture("absent-tool", vec![]))
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ProcessError::NotFound {
+                program: "absent-tool".to_string()
+            }
+        );
     }
 
     #[test]
@@ -469,20 +469,12 @@ mod tests {
     }
 
     #[test]
-    fn a_cancelled_command_is_killed_and_reported() {
-        let bin = TestBin::new("slowc", "#!/bin/sh\nsleep 30\n");
-        let cancel = AtomicBool::new(true);
-        let error = bin
-            .runner()
-            .run_cancellable(&CommandSpec::capture("slowc", vec![]), &cancel)
-            .unwrap_err();
-        assert!(matches!(error, ProcessError::Cancelled { .. }));
-    }
-
-    #[test]
     fn interactive_commands_keep_their_exit_code_without_capturing() {
         let bin = TestBin::new("interactive", "#!/bin/sh\nexit 3\n");
-        let output = bin.runner().run(&CommandSpec::interactive("interactive", vec![])).expect("run");
+        let output = bin
+            .runner()
+            .run(&CommandSpec::interactive("interactive", vec![]))
+            .expect("run");
         assert_eq!(output.exit_code, Some(3));
         assert!(!output.success());
     }

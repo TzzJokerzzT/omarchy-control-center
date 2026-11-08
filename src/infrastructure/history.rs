@@ -6,7 +6,7 @@
 //! code, command and an error summary.
 
 use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::application::OperationRecord;
 
@@ -18,10 +18,6 @@ pub struct History {
 impl History {
     pub fn new(path: PathBuf) -> Self {
         Self { path }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     /// Appends one record. The file is created owner-only; an existing file with
@@ -41,7 +37,10 @@ impl History {
 
         let line = serde_json::to_string(record).unwrap_or_else(|_| {
             // A record that cannot be serialized must still leave evidence.
-            format!("{{\"error\":\"unserialisable record for {}\"}}", record.component)
+            format!(
+                "{{\"error\":\"unserialisable record for {}\"}}",
+                record.component
+            )
         });
         writeln!(file, "{line}")?;
         file.flush()

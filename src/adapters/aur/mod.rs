@@ -87,11 +87,8 @@ impl AurAdapter {
         name: &str,
         context: &str,
     ) -> Result<CommandOutput, AdapterError> {
-        let spec = CommandSpec::capture(
-            helper.program,
-            vec![flag.to_string(), name.to_string()],
-        )
-        .with_timeout(INSTALLED_TIMEOUT);
+        let spec = CommandSpec::capture(helper.program, vec![flag.to_string(), name.to_string()])
+            .with_timeout(INSTALLED_TIMEOUT);
         self.runner.run(&spec).map_err(|error| match error {
             ProcessError::NotFound { .. } => AdapterError::ToolUnavailable {
                 tool: helper.program.to_string(),
@@ -100,7 +97,6 @@ impl AurAdapter {
             other => AdapterError::command(context, spec.display(), other.to_string()),
         })
     }
-
 
     /// The helper this adapter speaks to: `yay` first, then `paru`.
     fn helper(&self) -> Option<Helper> {
@@ -302,7 +298,10 @@ impl ComponentAdapter for AurAdapter {
             return Err(AdapterError::command(
                 "helper -Qi <package>",
                 format!("{} -Qi {name}", helper.program),
-                format!("the package is no longer installed: {}", query.stderr.trim()),
+                format!(
+                    "the package is no longer installed: {}",
+                    query.stderr.trim()
+                ),
             ));
         }
         let records = parse_qi(&query.stdout);
@@ -323,13 +322,21 @@ impl ComponentAdapter for AurAdapter {
                 dependents.len(),
                 summarise_list(&dependents)
             ));
-            affected.extend(dependents.iter().map(|dependent| format!("dependent: {dependent}")));
+            affected.extend(
+                dependents
+                    .iter()
+                    .map(|dependent| format!("dependent: {dependent}")),
+            );
         }
 
         let mut unknown = Vec::new();
         match self.run_installed(&helper, "-Ql", name, "helper -Ql <package>") {
             Ok(listing) if listing.success() => {
-                let files = listing.stdout.lines().filter(|line| !line.trim().is_empty()).count();
+                let files = listing
+                    .stdout
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .count();
                 affected.push(format!("{files} file(s) owned by the package (helper -Ql)"));
             }
             _ => unknown.push(
@@ -437,7 +444,11 @@ fn summarise_list(items: &[String]) -> String {
     if items.len() <= LIMIT {
         return items.join(", ");
     }
-    format!("{} … (+{} more)", items[..LIMIT].join(", "), items.len() - LIMIT)
+    format!(
+        "{} … (+{} more)",
+        items[..LIMIT].join(", "),
+        items.len() - LIMIT
+    )
 }
 
 /// Whether `component` is a foreign pacman package, the only kind of component
@@ -584,7 +595,9 @@ mod tests {
         // Official packages stay with pacman; this adapter must not claim them.
         let mut official = foreign.clone();
         official.source = ComponentSource::Pacman {
-            origin: PacmanOrigin::Official { repo: Some("extra".to_string()) },
+            origin: PacmanOrigin::Official {
+                repo: Some("extra".to_string()),
+            },
         };
         assert!(!adapter.supports(&official, OperationKind::Remove));
 
@@ -599,7 +612,10 @@ mod tests {
     #[test]
     fn a_plan_delegates_the_removal_to_the_detected_helper() {
         let runner = helper_runner()
-            .on("yay -Qi some-aur-pkg", "Name : some-aur-pkg\nVersion : 1.0-1\nRequired By : None\n")
+            .on(
+                "yay -Qi some-aur-pkg",
+                "Name : some-aur-pkg\nVersion : 1.0-1\nRequired By : None\n",
+            )
             .on("yay -Ql some-aur-pkg", "some-aur-pkg /usr/bin/thing\n");
         let adapter = AurAdapter::new(Arc::new(runner));
         let request = OperationRequest::new(
@@ -615,13 +631,20 @@ mod tests {
         assert!(plan.commands[0].requires_root);
         assert!(plan.is_executable());
         assert!(plan.affected.iter().any(|item| item.contains("1 file(s)")));
-        assert!(plan.notes.iter().any(|note| note.contains("delegated to yay")));
+        assert!(
+            plan.notes
+                .iter()
+                .any(|note| note.contains("delegated to yay"))
+        );
     }
 
     #[test]
     fn a_foreign_plan_with_dependents_is_blocked() {
         let runner = helper_runner()
-            .on("yay -Qi blocked-pkg", "Name : blocked-pkg\nRequired By : other-pkg\n")
+            .on(
+                "yay -Qi blocked-pkg",
+                "Name : blocked-pkg\nRequired By : other-pkg\n",
+            )
             .on("yay -Ql blocked-pkg", "blocked-pkg /usr/bin/thing\n");
         let adapter = AurAdapter::new(Arc::new(runner));
         let request = OperationRequest::new(
@@ -632,7 +655,11 @@ mod tests {
             .plan_operation(&request, &foreign_component("blocked-pkg"))
             .expect("plan");
         assert!(!plan.is_executable());
-        assert!(plan.blocking.iter().any(|reason| reason.contains("other-pkg")));
+        assert!(
+            plan.blocking
+                .iter()
+                .any(|reason| reason.contains("other-pkg"))
+        );
     }
 
     #[test]
@@ -667,7 +694,9 @@ mod tests {
             version: Some("1.0-1".to_string()),
             description: Some("an AUR package".to_string()),
             category: crate::domain::ComponentCategory::Package,
-            source: ComponentSource::Pacman { origin: PacmanOrigin::Foreign },
+            source: ComponentSource::Pacman {
+                origin: PacmanOrigin::Foreign,
+            },
             status: crate::domain::ComponentStatus::Installed,
             confidence: crate::domain::DetectionConfidence::Authoritative,
             capabilities: vec![ComponentCapability::Inspect, ComponentCapability::Remove],

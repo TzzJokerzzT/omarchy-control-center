@@ -45,7 +45,12 @@ pub struct Args {
     pub print_plan: Option<String>,
 
     /// Operation to plan with `--print-plan`.
-    #[arg(long, value_name = "KIND", default_value = "remove", requires = "print_plan")]
+    #[arg(
+        long,
+        value_name = "KIND",
+        default_value = "remove",
+        requires = "print_plan"
+    )]
     pub kind: PlanKindArg,
 }
 

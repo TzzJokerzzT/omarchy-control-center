@@ -9,7 +9,11 @@ pub enum AdapterError {
     ToolUnavailable { tool: String, reason: String },
 
     #[error("{context} failed ({command}): {detail}")]
-    Command { context: String, command: String, detail: String },
+    Command {
+        context: String,
+        command: String,
+        detail: String,
+    },
 
     #[error("could not parse {context}: {detail}")]
     Parse { context: String, detail: String },
@@ -18,13 +22,11 @@ pub enum AdapterError {
     Unsupported { adapter: String, capability: String },
 
     #[error("refusing identifier {value:?} for {adapter}: {reason}")]
-    InvalidId { adapter: String, value: String, reason: String },
-
-    #[error("the plan changed since it was previewed; preview the operation again")]
-    PlanDrift,
-
-    #[error("operation blocked: {reasons}")]
-    Blocked { reasons: String },
+    InvalidId {
+        adapter: String,
+        value: String,
+        reason: String,
+    },
 
     #[error("{0}")]
     Other(String),
@@ -36,10 +38,17 @@ impl AdapterError {
         command: impl Into<String>,
         detail: impl Into<String>,
     ) -> Self {
-        Self::Command { context: context.into(), command: command.into(), detail: detail.into() }
+        Self::Command {
+            context: context.into(),
+            command: command.into(),
+            detail: detail.into(),
+        }
     }
 
     pub fn unsupported(adapter: impl Into<String>, capability: impl Into<String>) -> Self {
-        Self::Unsupported { adapter: adapter.into(), capability: capability.into() }
+        Self::Unsupported {
+            adapter: adapter.into(),
+            capability: capability.into(),
+        }
     }
 }

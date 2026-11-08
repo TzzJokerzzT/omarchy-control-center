@@ -22,10 +22,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::domain::{
-    AdapterError, AdapterStatus, Component, ComponentCapability, ComponentCategory, ComponentId,
-    ComponentSource, ComponentStatus, DetailField, DetectionConfidence, DetectionMethod,
-    OperationKind, OperationOutcome, OperationPlan, OperationRequest, PacmanOrigin,
-    ComponentAdapter,
+    AdapterError, AdapterStatus, Component, ComponentAdapter, ComponentCapability,
+    ComponentCategory, ComponentId, ComponentSource, ComponentStatus, DetailField,
+    DetectionConfidence, DetectionMethod, OperationKind, OperationOutcome, OperationPlan,
+    OperationRequest, PacmanOrigin,
 };
 use crate::infrastructure::process::{CommandOutput, CommandRunner, CommandSpec, ProcessError};
 use crate::infrastructure::validate::validate_pacman_name;
@@ -136,7 +136,11 @@ impl PacmanAdapter {
             description: record.get("Description").map(|value| value.to_string()),
             category: ComponentCategory::Package,
             source: ComponentSource::Pacman { origin },
-            status: if is_orphan { ComponentStatus::Orphan } else { ComponentStatus::Installed },
+            status: if is_orphan {
+                ComponentStatus::Orphan
+            } else {
+                ComponentStatus::Installed
+            },
             confidence: DetectionConfidence::Authoritative,
             capabilities,
             detection: DetectionMethod::command("pacman", vec!["-Q".to_string()])
@@ -154,9 +158,10 @@ impl PacmanAdapter {
 /// `pacman --version` prints an ASCII logo before the real version line, so the
 /// version is taken from the line that actually carries it.
 fn version_line(stdout: &str) -> Option<String> {
-    stdout
-        .lines()
-        .find_map(|line| line.find("Pacman v").map(|index| line[index..].trim().to_string()))
+    stdout.lines().find_map(|line| {
+        line.find("Pacman v")
+            .map(|index| line[index..].trim().to_string())
+    })
 }
 
 impl ComponentAdapter for PacmanAdapter {
@@ -188,7 +193,10 @@ impl ComponentAdapter for PacmanAdapter {
                 tool: None,
                 tool_version: None,
                 capabilities: self.capabilities(),
-                commands: COMMANDS.iter().map(|command| (*command).to_string()).collect(),
+                commands: COMMANDS
+                    .iter()
+                    .map(|command| (*command).to_string())
+                    .collect(),
                 notes: Vec::new(),
             };
         };
@@ -206,7 +214,10 @@ impl ComponentAdapter for PacmanAdapter {
             tool: Some(tool),
             tool_version,
             capabilities: self.capabilities(),
-            commands: COMMANDS.iter().map(|command| (*command).to_string()).collect(),
+            commands: COMMANDS
+                .iter()
+                .map(|command| (*command).to_string())
+                .collect(),
             notes: Vec::new(),
         }
     }
@@ -217,7 +228,11 @@ impl ComponentAdapter for PacmanAdapter {
             return Err(AdapterError::command(
                 "pacman -Q",
                 "pacman -Q",
-                format!("exit {:?}: {}", installed.exit_code, installed.stderr.trim()),
+                format!(
+                    "exit {:?}: {}",
+                    installed.exit_code,
+                    installed.stderr.trim()
+                ),
             ));
         }
         let packages = parse_q(&installed.stdout);
@@ -253,9 +268,12 @@ impl ComponentAdapter for PacmanAdapter {
 
         for (name, version) in &packages {
             match detail_by_name.get(name.as_str()) {
-                Some(record) => {
-                    components.push(self.component_from(record, &foreign, &orphans, Some(version))?)
-                }
+                Some(record) => components.push(self.component_from(
+                    record,
+                    &foreign,
+                    &orphans,
+                    Some(version),
+                )?),
                 None => components.push(self.minimal_component(name, version, &foreign, &orphans)),
             }
         }
@@ -285,7 +303,9 @@ impl ComponentAdapter for PacmanAdapter {
         }
 
         let records = parse_qi(&output.stdout);
-        let Some(record) = records.first() else { return Ok(None) };
+        let Some(record) = records.first() else {
+            return Ok(None);
+        };
 
         let foreign = self.name_set("-Qm", "pacman -Qm")?;
         let orphans = self.name_set("-Qdtq", "pacman -Qdtq")?;
@@ -293,12 +313,18 @@ impl ComponentAdapter for PacmanAdapter {
 
         // The repository is not part of `-Qi`; ask for it once, and leave it as
         // unavailable if the answer is not trustworthy.
-        if matches!(component.source, ComponentSource::Pacman { origin: PacmanOrigin::Official { repo: None } })
-            && let Ok(si) = self.run(&["-Si", native_id], "pacman -Si <package>")
+        if matches!(
+            component.source,
+            ComponentSource::Pacman {
+                origin: PacmanOrigin::Official { repo: None }
+            }
+        ) && let Ok(si) = self.run(&["-Si", native_id], "pacman -Si <package>")
             && si.success()
             && let Some(repo) = parse_repository(&si.stdout)
         {
-            component.source = ComponentSource::Pacman { origin: PacmanOrigin::Official { repo: Some(repo) } };
+            component.source = ComponentSource::Pacman {
+                origin: PacmanOrigin::Official { repo: Some(repo) },
+            };
         }
 
         Ok(Some(component))
@@ -312,7 +338,9 @@ impl ComponentAdapter for PacmanAdapter {
         kind == OperationKind::Remove
             && matches!(
                 component.source,
-                ComponentSource::Pacman { origin: PacmanOrigin::Official { .. } }
+                ComponentSource::Pacman {
+                    origin: PacmanOrigin::Official { .. }
+                }
             )
     }
 
@@ -339,7 +367,10 @@ impl ComponentAdapter for PacmanAdapter {
             return Err(AdapterError::command(
                 "pacman -Qi <package>",
                 format!("pacman -Qi {name}"),
-                format!("the package is no longer installed: {}", output.stderr.trim()),
+                format!(
+                    "the package is no longer installed: {}",
+                    output.stderr.trim()
+                ),
             ));
         }
         let records = parse_qi(&output.stdout);
@@ -361,13 +392,21 @@ impl ComponentAdapter for PacmanAdapter {
                 dependents.len(),
                 summarise_list(&dependents)
             ));
-            affected.extend(dependents.iter().map(|dependent| format!("dependent: {dependent}")));
+            affected.extend(
+                dependents
+                    .iter()
+                    .map(|dependent| format!("dependent: {dependent}")),
+            );
         }
 
         let mut unknown = Vec::new();
         match self.run(&["-Ql", name], "pacman -Ql <package>") {
             Ok(listing) if listing.success() => {
-                let files = listing.stdout.lines().filter(|line| !line.trim().is_empty()).count();
+                let files = listing
+                    .stdout
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .count();
                 affected.push(format!("{files} file(s) owned by the package (pacman -Ql)"));
             }
             _ => unknown.push(
@@ -486,7 +525,11 @@ fn summarise_list(items: &[String]) -> String {
     if items.len() <= LIMIT {
         return items.join(", ");
     }
-    format!("{} … (+{} more)", items[..LIMIT].join(", "), items.len() - LIMIT)
+    format!(
+        "{} … (+{} more)",
+        items[..LIMIT].join(", "),
+        items.len() - LIMIT
+    )
 }
 
 impl PacmanAdapter {
@@ -569,8 +612,12 @@ mod tests {
 
     #[test]
     fn reads_the_version_through_the_ascii_logo() {
-        let stdout = "\n .--.                  Pacman v7.1.0 - libalpm v16.0.1\n/ _.-'  Copyright\n";
-        assert_eq!(version_line(stdout).as_deref(), Some("Pacman v7.1.0 - libalpm v16.0.1"));
+        let stdout =
+            "\n .--.                  Pacman v7.1.0 - libalpm v16.0.1\n/ _.-'  Copyright\n";
+        assert_eq!(
+            version_line(stdout).as_deref(),
+            Some("Pacman v7.1.0 - libalpm v16.0.1")
+        );
         assert_eq!(version_line(""), None);
     }
 
@@ -578,8 +625,16 @@ mod tests {
     fn reports_the_tool_and_version_when_available() {
         let status = adapter(complete_runner()).status();
         assert!(status.available());
-        assert_eq!(status.tool_version.as_deref(), Some("Pacman v7.1.0 - libalpm v16.0.1"));
-        assert!(status.commands.iter().any(|command| command == "pacman -Qi"));
+        assert_eq!(
+            status.tool_version.as_deref(),
+            Some("Pacman v7.1.0 - libalpm v16.0.1")
+        );
+        assert!(
+            status
+                .commands
+                .iter()
+                .any(|command| command == "pacman -Qi")
+        );
     }
 
     #[test]
@@ -587,40 +642,70 @@ mod tests {
         let components = adapter(complete_runner()).list().expect("list");
         assert_eq!(components.len(), 4);
 
-        let btop = components.iter().find(|component| component.name == "btop").expect("btop");
+        let btop = components
+            .iter()
+            .find(|component| component.name == "btop")
+            .expect("btop");
         assert_eq!(btop.id.to_string(), "pacman:btop");
         assert_eq!(btop.version.as_deref(), Some("1.4.0-1"));
         assert_eq!(btop.description.as_deref(), Some("A monitor of resources"));
         assert_eq!(btop.installed_size, Some(5_326_766));
-        assert_eq!(btop.depends_on, vec!["gcc-libs", "glibc", "libstdc++.so=6-64"]);
+        assert_eq!(
+            btop.depends_on,
+            vec!["gcc-libs", "glibc", "libstdc++.so=6-64"]
+        );
         assert!(btop.required_by.is_empty());
         assert_eq!(btop.status, ComponentStatus::Installed);
         assert_eq!(btop.confidence, DetectionConfidence::Authoritative);
         assert_eq!(btop.category, ComponentCategory::Package);
         assert_eq!(
             btop.source,
-            ComponentSource::Pacman { origin: PacmanOrigin::Official { repo: None } }
+            ComponentSource::Pacman {
+                origin: PacmanOrigin::Official { repo: None }
+            }
         );
-        assert_eq!(btop.installed_at.as_deref(), Some("Mon 04 Aug 2025 10:22:33 PM -03"));
+        assert_eq!(
+            btop.installed_at.as_deref(),
+            Some("Mon 04 Aug 2025 10:22:33 PM -03")
+        );
     }
 
     #[test]
     fn marks_foreign_packages_and_orphans_from_their_own_lists() {
         let components = adapter(complete_runner()).list().expect("list");
 
-        let yay = components.iter().find(|component| component.name == "yay").expect("yay");
-        assert_eq!(yay.source, ComponentSource::Pacman { origin: PacmanOrigin::Foreign });
+        let yay = components
+            .iter()
+            .find(|component| component.name == "yay")
+            .expect("yay");
+        assert_eq!(
+            yay.source,
+            ComponentSource::Pacman {
+                origin: PacmanOrigin::Foreign
+            }
+        );
         assert_eq!(yay.status, ComponentStatus::Installed);
 
-        let libfoo = components.iter().find(|component| component.name == "libfoo").expect("libfoo");
-        assert_eq!(libfoo.source, ComponentSource::Pacman { origin: PacmanOrigin::Foreign });
+        let libfoo = components
+            .iter()
+            .find(|component| component.name == "libfoo")
+            .expect("libfoo");
+        assert_eq!(
+            libfoo.source,
+            ComponentSource::Pacman {
+                origin: PacmanOrigin::Foreign
+            }
+        );
         assert_eq!(libfoo.status, ComponentStatus::Orphan);
     }
 
     #[test]
     fn a_dependent_package_reports_who_requires_it() {
         let components = adapter(complete_runner()).list().expect("list");
-        let gcc = components.iter().find(|component| component.name == "gcc-libs").expect("gcc");
+        let gcc = components
+            .iter()
+            .find(|component| component.name == "gcc-libs")
+            .expect("gcc");
         assert_eq!(gcc.required_by, vec!["btop"]);
     }
 
@@ -629,7 +714,10 @@ mod tests {
         let components = adapter(complete_runner()).list().expect("list");
         let pacman = adapter(complete_runner());
 
-        let btop = components.iter().find(|component| component.name == "btop").expect("btop");
+        let btop = components
+            .iter()
+            .find(|component| component.name == "btop")
+            .expect("btop");
         assert_eq!(
             btop.capabilities,
             vec![ComponentCapability::Inspect, ComponentCapability::Remove]
@@ -638,7 +726,10 @@ mod tests {
 
         // Foreign packages are removable, but through their AUR helper: a different
         // database owner, so this adapter must not claim them.
-        let yay = components.iter().find(|component| component.name == "yay").expect("yay");
+        let yay = components
+            .iter()
+            .find(|component| component.name == "yay")
+            .expect("yay");
         assert_eq!(
             yay.capabilities,
             vec![ComponentCapability::Inspect, ComponentCapability::Remove]
@@ -660,17 +751,30 @@ mod tests {
 
         let components = adapter(runner).list().expect("list must not fail");
         assert_eq!(components.len(), 4);
-        let btop = components.iter().find(|component| component.name == "btop").expect("btop");
+        let btop = components
+            .iter()
+            .find(|component| component.name == "btop")
+            .expect("btop");
         assert_eq!(btop.version.as_deref(), Some("1.4.0-1"));
         assert!(btop.description.is_none(), "no invented description");
-        assert!(btop.detection.note.as_deref().unwrap_or_default().contains("pacman -Qi failed"));
+        assert!(
+            btop.detection
+                .note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("pacman -Qi failed")
+        );
     }
 
     #[test]
     fn a_failing_package_list_is_an_error_not_an_empty_inventory() {
-        let runner = FakeRunner::new().on_exit("pacman -Q", 1, "", "error: could not open database");
+        let runner =
+            FakeRunner::new().on_exit("pacman -Q", 1, "", "error: could not open database");
         let error = adapter(runner).list().expect_err("must fail");
-        assert!(matches!(error, AdapterError::Command { .. }), "unexpected error: {error}");
+        assert!(
+            matches!(error, AdapterError::Command { .. }),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
@@ -698,20 +802,34 @@ mod tests {
 
     #[test]
     fn details_reports_a_component_that_no_longer_exists() {
-        let runner = complete_runner()
-            .on_exit("pacman -Qi ghost", 1, "", "error: package 'ghost' was not found\n");
+        let runner = complete_runner().on_exit(
+            "pacman -Qi ghost",
+            1,
+            "",
+            "error: package 'ghost' was not found\n",
+        );
         assert!(adapter(runner).details("ghost").expect("details").is_none());
     }
 
     #[test]
     fn details_fills_the_repository_from_a_single_si_query() {
         let runner = complete_runner()
-            .on("pacman -Qi btop", "Name : btop\nVersion : 1.4.0-1\nDepends On : glibc\n")
+            .on(
+                "pacman -Qi btop",
+                "Name : btop\nVersion : 1.4.0-1\nDepends On : glibc\n",
+            )
             .on("pacman -Si btop", SI);
-        let component = adapter(runner).details("btop").expect("details").expect("present");
+        let component = adapter(runner)
+            .details("btop")
+            .expect("details")
+            .expect("present");
         assert_eq!(
             component.source,
-            ComponentSource::Pacman { origin: PacmanOrigin::Official { repo: Some("extra".to_string()) } }
+            ComponentSource::Pacman {
+                origin: PacmanOrigin::Official {
+                    repo: Some("extra".to_string())
+                }
+            }
         );
         assert_eq!(component.source.label(), "pacman / extra");
     }
@@ -721,10 +839,15 @@ mod tests {
         let runner = complete_runner()
             .on("pacman -Qi btop", "Name : btop\nVersion : 1.4.0-1\n")
             .on_exit("pacman -Si btop", 1, "", "error: package not found");
-        let component = adapter(runner).details("btop").expect("details").expect("present");
+        let component = adapter(runner)
+            .details("btop")
+            .expect("details")
+            .expect("present");
         assert_eq!(
             component.source,
-            ComponentSource::Pacman { origin: PacmanOrigin::Official { repo: None } }
+            ComponentSource::Pacman {
+                origin: PacmanOrigin::Official { repo: None }
+            }
         );
         assert_eq!(component.source.label(), "pacman / official");
     }
@@ -760,7 +883,11 @@ mod removal_tests {
             version: Some("1.4.0-1".to_string()),
             description: None,
             category: ComponentCategory::Package,
-            source: ComponentSource::Pacman { origin: PacmanOrigin::Official { repo: Some("extra".into()) } },
+            source: ComponentSource::Pacman {
+                origin: PacmanOrigin::Official {
+                    repo: Some("extra".into()),
+                },
+            },
             status: ComponentStatus::Installed,
             confidence: DetectionConfidence::Authoritative,
             capabilities: vec![ComponentCapability::Inspect, ComponentCapability::Remove],
@@ -780,8 +907,13 @@ mod removal_tests {
 
     #[test]
     fn the_plan_is_exactly_one_non_cascading_removal() {
-        let adapter = PacmanAdapter::new(Arc::new(runner_with_btop(false, Some("btop /usr/bin/btop\n"))));
-        let plan = adapter.plan_operation(&request(), &component()).expect("plan");
+        let adapter = PacmanAdapter::new(Arc::new(runner_with_btop(
+            false,
+            Some("btop /usr/bin/btop\n"),
+        )));
+        let plan = adapter
+            .plan_operation(&request(), &component())
+            .expect("plan");
 
         assert_eq!(plan.commands.len(), 1);
         let command = &plan.commands[0];
@@ -791,18 +923,30 @@ mod removal_tests {
         assert!(command.requires_tty);
         // No recursive or forced removal is ever proposed by this version.
         for forbidden in ["-Rns", "-Rdd", "-Rsc", "-Rn", "-Rc"] {
-            assert!(!command.args.iter().any(|arg| arg == forbidden), "{forbidden} must not appear");
+            assert!(
+                !command.args.iter().any(|arg| arg == forbidden),
+                "{forbidden} must not appear"
+            );
         }
         assert!(plan.is_executable());
     }
 
     #[test]
     fn a_plan_with_dependents_is_blocked_and_names_them() {
-        let adapter = PacmanAdapter::new(Arc::new(runner_with_btop(true, Some("btop /usr/bin/btop\n"))));
-        let plan = adapter.plan_operation(&request(), &component()).expect("plan");
+        let adapter = PacmanAdapter::new(Arc::new(runner_with_btop(
+            true,
+            Some("btop /usr/bin/btop\n"),
+        )));
+        let plan = adapter
+            .plan_operation(&request(), &component())
+            .expect("plan");
 
         assert!(!plan.is_executable());
-        assert!(plan.blocking.iter().any(|reason| reason.contains("hyprland")));
+        assert!(
+            plan.blocking
+                .iter()
+                .any(|reason| reason.contains("hyprland"))
+        );
         assert!(plan.affected.iter().any(|item| item.contains("hyprland")));
         assert!(plan.blocking[0].contains("does not cascade"));
     }
@@ -813,24 +957,45 @@ mod removal_tests {
             false,
             Some("btop /usr/bin/btop\nbtop /usr/share/doc/btop\n"),
         )));
-        let plan = adapter.plan_operation(&request(), &component()).expect("plan");
-        assert!(plan.affected.iter().any(|item| item.contains("2 file(s)")), "{:?}", plan.affected);
+        let plan = adapter
+            .plan_operation(&request(), &component())
+            .expect("plan");
+        assert!(
+            plan.affected.iter().any(|item| item.contains("2 file(s)")),
+            "{:?}",
+            plan.affected
+        );
         assert!(!plan.unknown.iter().any(|fact| fact.contains("pacman -Ql")));
     }
 
     #[test]
     fn a_failed_file_listing_becomes_an_unknown_fact_not_a_zero() {
         let adapter = PacmanAdapter::new(Arc::new(runner_with_btop(false, None)));
-        let plan = adapter.plan_operation(&request(), &component()).expect("plan");
-        assert!(plan.unknown.iter().any(|fact| fact.contains("pacman -Ql")), "{:?}", plan.unknown);
+        let plan = adapter
+            .plan_operation(&request(), &component())
+            .expect("plan");
+        assert!(
+            plan.unknown.iter().any(|fact| fact.contains("pacman -Ql")),
+            "{:?}",
+            plan.unknown
+        );
         assert!(!plan.affected.iter().any(|item| item.contains("file(s)")));
     }
 
     #[test]
     fn the_plan_never_claims_a_removal_is_reversible() {
-        let adapter = PacmanAdapter::new(Arc::new(runner_with_btop(false, Some("btop /usr/bin/btop\n"))));
-        let plan = adapter.plan_operation(&request(), &component()).expect("plan");
-        assert!(plan.notes.iter().any(|note| note.contains("not reversible")));
+        let adapter = PacmanAdapter::new(Arc::new(runner_with_btop(
+            false,
+            Some("btop /usr/bin/btop\n"),
+        )));
+        let plan = adapter
+            .plan_operation(&request(), &component())
+            .expect("plan");
+        assert!(
+            plan.notes
+                .iter()
+                .any(|note| note.contains("not reversible"))
+        );
     }
 
     #[test]
@@ -841,9 +1006,17 @@ mod removal_tests {
             ComponentId::new("pacman", "btop; rm -rf /"),
             OperationKind::Remove,
         );
-        let error = adapter.plan_operation(&hostile, &component()).expect_err("must refuse");
-        assert!(matches!(error, AdapterError::InvalidId { .. }), "unexpected: {error}");
-        assert!(runner.calls().is_empty(), "no process may run for a hostile identifier");
+        let error = adapter
+            .plan_operation(&hostile, &component())
+            .expect_err("must refuse");
+        assert!(
+            matches!(error, AdapterError::InvalidId { .. }),
+            "unexpected: {error}"
+        );
+        assert!(
+            runner.calls().is_empty(),
+            "no process may run for a hostile identifier"
+        );
     }
 
     #[test]
@@ -855,15 +1028,19 @@ mod removal_tests {
             "error: package 'btop' was not found\n",
         );
         let adapter = PacmanAdapter::new(Arc::new(runner));
-        let error = adapter.plan_operation(&request(), &component()).expect_err("must fail");
-        assert!(matches!(error, AdapterError::Command { .. }), "unexpected: {error}");
+        let error = adapter
+            .plan_operation(&request(), &component())
+            .expect_err("must fail");
+        assert!(
+            matches!(error, AdapterError::Command { .. }),
+            "unexpected: {error}"
+        );
     }
 
     #[test]
     fn execution_runs_exactly_the_confirmed_command() {
-        let runner = Arc::new(
-            FakeRunner::new().on_exit("pacman -R btop", 0, "removing btop...\n", ""),
-        );
+        let runner =
+            Arc::new(FakeRunner::new().on_exit("pacman -R btop", 0, "removing btop...\n", ""));
         let adapter = PacmanAdapter::new(Arc::clone(&runner) as Arc<dyn CommandRunner>);
         let plan = OperationPlan {
             adapter: "pacman".to_string(),
@@ -946,7 +1123,10 @@ mod removal_tests {
             notes: Vec::new(),
         };
         let error = adapter.execute(&plan).expect_err("must refuse");
-        assert!(matches!(error, AdapterError::InvalidId { .. }), "unexpected: {error}");
+        assert!(
+            matches!(error, AdapterError::InvalidId { .. }),
+            "unexpected: {error}"
+        );
         assert!(runner.calls().is_empty(), "nothing may run");
     }
 

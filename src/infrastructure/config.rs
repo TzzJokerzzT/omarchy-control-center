@@ -19,21 +19,13 @@ pub enum ConfigError {
     Parse { path: PathBuf, detail: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// Explore the inventory without exposing destructive actions.
     pub read_only: bool,
-    /// Extra directories prepended to the executable search path.
+    /// Extra directories prepended to the executable search path, in order.
     pub extra_search_paths: Vec<PathBuf>,
-    /// Deadline for every non-interactive command, in seconds.
-    pub command_timeout_secs: u64,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self { read_only: false, extra_search_paths: Vec::new(), command_timeout_secs: 30 }
-    }
 }
 
 impl Config {
@@ -42,9 +34,14 @@ impl Config {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let text = std::fs::read_to_string(path)
-            .map_err(|source| ConfigError::Read { path: path.to_path_buf(), source })?;
-        Self::parse(&text).map_err(|detail| ConfigError::Parse { path: path.to_path_buf(), detail })
+        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Self::parse(&text).map_err(|detail| ConfigError::Parse {
+            path: path.to_path_buf(),
+            detail,
+        })
     }
 
     pub fn parse(text: &str) -> Result<Self, String> {
@@ -60,7 +57,6 @@ mod tests {
     fn defaults_are_conservative() {
         let config = Config::default();
         assert!(!config.read_only);
-        assert_eq!(config.command_timeout_secs, 30);
         assert!(config.extra_search_paths.is_empty());
     }
 
@@ -68,7 +64,7 @@ mod tests {
     fn parses_a_partial_file_and_keeps_defaults_for_the_rest() {
         let config = Config::parse("read_only = true\n").expect("parse");
         assert!(config.read_only);
-        assert_eq!(config.command_timeout_secs, 30);
+        assert!(config.extra_search_paths.is_empty());
     }
 
     #[test]

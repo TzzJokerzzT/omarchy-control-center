@@ -45,13 +45,6 @@ impl AdapterStatus {
     pub fn available(&self) -> bool {
         self.availability.is_available()
     }
-
-    pub fn unavailable_reason(&self) -> Option<&str> {
-        match &self.availability {
-            AdapterAvailability::Available => None,
-            AdapterAvailability::Unavailable { reason } => Some(reason),
-        }
-    }
 }
 
 pub trait ComponentAdapter: Send + Sync {

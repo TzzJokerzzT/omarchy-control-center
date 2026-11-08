@@ -42,7 +42,10 @@ pub struct ComponentId {
 
 impl ComponentId {
     pub fn new(adapter: impl Into<String>, native_id: impl Into<String>) -> Self {
-        Self { adapter: adapter.into(), native_id: native_id.into() }
+        Self {
+            adapter: adapter.into(),
+            native_id: native_id.into(),
+        }
     }
 }
 
@@ -93,7 +96,9 @@ impl InstallScope {
 pub enum PacmanOrigin {
     /// `repo` stays `None` until a source reports it: `pacman -Qi` does not, and
     /// guessing a repository would be inventing a fact.
-    Official { repo: Option<String> },
+    Official {
+        repo: Option<String>,
+    },
     Foreign,
 }
 
@@ -109,13 +114,17 @@ impl ComponentSource {
     /// Human label combining manager and origin, e.g. `pacman / extra`.
     pub fn label(&self) -> String {
         match self {
-            Self::Pacman { origin: PacmanOrigin::Official { repo: Some(repo) } } => {
+            Self::Pacman {
+                origin: PacmanOrigin::Official { repo: Some(repo) },
+            } => {
                 format!("pacman / {repo}")
             }
-            Self::Pacman { origin: PacmanOrigin::Official { repo: None } } => {
-                "pacman / official".to_string()
-            }
-            Self::Pacman { origin: PacmanOrigin::Foreign } => "pacman / foreign".to_string(),
+            Self::Pacman {
+                origin: PacmanOrigin::Official { repo: None },
+            } => "pacman / official".to_string(),
+            Self::Pacman {
+                origin: PacmanOrigin::Foreign,
+            } => "pacman / foreign".to_string(),
             Self::Aur { helper } => format!("AUR / {helper}"),
             Self::Flatpak { scope } => format!("flatpak / {}", scope.label()),
         }
@@ -124,8 +133,12 @@ impl ComponentSource {
     /// Group used by the sidebar to filter the inventory.
     pub fn group(&self) -> SourceGroup {
         match self {
-            Self::Pacman { origin: PacmanOrigin::Official { .. } } => SourceGroup::Pacman,
-            Self::Pacman { origin: PacmanOrigin::Foreign } => SourceGroup::Foreign,
+            Self::Pacman {
+                origin: PacmanOrigin::Official { .. },
+            } => SourceGroup::Pacman,
+            Self::Pacman {
+                origin: PacmanOrigin::Foreign,
+            } => SourceGroup::Foreign,
             Self::Aur { .. } => SourceGroup::Foreign,
             Self::Flatpak { .. } => SourceGroup::Flatpak,
         }
@@ -157,16 +170,6 @@ pub enum ComponentStatus {
     Installed,
     Orphan,
     Unknown,
-}
-
-impl ComponentStatus {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Installed => "installed",
-            Self::Orphan => "orphan",
-            Self::Unknown => "unknown",
-        }
-    }
 }
 
 /// How much a detection can be trusted, stated by the adapter that produced it.
@@ -202,7 +205,11 @@ pub struct DetectionMethod {
 
 impl DetectionMethod {
     pub fn command(program: impl Into<String>, args: Vec<String>) -> Self {
-        Self { program: program.into(), args, note: None }
+        Self {
+            program: program.into(),
+            args,
+            note: None,
+        }
     }
 
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
@@ -248,7 +255,10 @@ pub struct DetailField {
 
 impl DetailField {
     pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
-        Self { label: label.into(), value: value.into() }
+        Self {
+            label: label.into(),
+            value: value.into(),
+        }
     }
 }
 
@@ -313,16 +323,20 @@ mod tests {
 
     #[test]
     fn foreign_packages_group_with_aur_without_duplicating_identity() {
-        let source = ComponentSource::Pacman { origin: PacmanOrigin::Foreign };
+        let source = ComponentSource::Pacman {
+            origin: PacmanOrigin::Foreign,
+        };
         assert_eq!(source.group(), SourceGroup::Foreign);
-        let aur = ComponentSource::Aur { helper: "yay".to_string() };
+        let aur = ComponentSource::Aur {
+            helper: "yay".to_string(),
+        };
         assert_eq!(aur.group(), SourceGroup::Foreign);
     }
 
     #[test]
     fn detection_label_records_the_exact_command() {
-        let method = DetectionMethod::command("pacman", vec!["-Q".into()])
-            .with_note("installed packages");
+        let method =
+            DetectionMethod::command("pacman", vec!["-Q".into()]).with_note("installed packages");
         assert_eq!(method.label(), "pacman -Q — installed packages");
     }
 }

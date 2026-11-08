@@ -20,13 +20,13 @@ pub mod parse;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::domain::InstallScope;
 use crate::domain::{
     AdapterAvailability, AdapterError, AdapterStatus, Component, ComponentAdapter,
     ComponentCapability, ComponentCategory, ComponentId, ComponentSource, ComponentStatus,
     DetailField, DetectionConfidence, DetectionMethod, OperationKind, OperationOutcome,
     OperationPlan, OperationRequest,
 };
-use crate::domain::InstallScope;
 use crate::infrastructure::process::{CommandOutput, CommandRunner, CommandSpec, ProcessError};
 use crate::infrastructure::validate::validate_flatpak_ref;
 
@@ -328,10 +328,8 @@ impl ComponentAdapter for FlatpakAdapter {
     /// Flatpak owns its own store, so it is the only adapter allowed to remove or
     /// update a flatpak component. It never touches the pacman database.
     fn supports(&self, component: &Component, kind: OperationKind) -> bool {
-        matches!(
-            kind,
-            OperationKind::Remove | OperationKind::Update
-        ) && matches!(component.source, ComponentSource::Flatpak { .. })
+        matches!(kind, OperationKind::Remove | OperationKind::Update)
+            && matches!(component.source, ComponentSource::Flatpak { .. })
     }
 
     fn plan_operation(
@@ -363,7 +361,10 @@ impl ComponentAdapter for FlatpakAdapter {
         };
 
         // Re-read the object: the plan must describe the store as it is.
-        let info = self.run(vec!["info".to_string(), reference.clone()], "flatpak info <ref>")?;
+        let info = self.run(
+            vec!["info".to_string(), reference.clone()],
+            "flatpak info <ref>",
+        )?;
         if !info.success() && !info.stdout.trim().is_empty() {
             return Err(AdapterError::command(
                 "flatpak info <ref>",
@@ -386,7 +387,11 @@ impl ComponentAdapter for FlatpakAdapter {
 
         match request.kind {
             OperationKind::Remove => {
-                affected.push(format!("the {} record in the {} installation", category_word(is_runtime), scope.label()));
+                affected.push(format!(
+                    "the {} record in the {} installation",
+                    category_word(is_runtime),
+                    scope.label()
+                ));
                 // The listed columns do not state which applications use a runtime,
                 // so this stays an open question instead of a claim.
                 unknown.push(if is_runtime {
@@ -519,7 +524,10 @@ impl ComponentAdapter for FlatpakAdapter {
             summary: if success {
                 format!("{}d {}", plan.kind.label(), plan.target_name)
             } else {
-                format!("flatpak did not complete the {} (exit {exit_code:?})", plan.kind.label())
+                format!(
+                    "flatpak did not complete the {} (exit {exit_code:?})",
+                    plan.kind.label()
+                )
             },
         })
     }
@@ -620,7 +628,7 @@ mod tests {
         assert_eq!(firefox.status, ComponentStatus::Installed);
         assert_eq!(firefox.confidence, DetectionConfidence::Authoritative);
         assert_eq!(firefox.capabilities, flatpak_capabilities());
-        assert_eq!(firefox.detection.label(), format!("{LIST_APP}"));
+        assert_eq!(firefox.detection.label(), LIST_APP.to_string());
         assert!(
             firefox
                 .extra
@@ -827,7 +835,10 @@ mod tests {
             plan.commands[0].display(),
             "flatpak uninstall --user --noninteractive --no-related app/org.example.App/x86_64/stable"
         );
-        assert!(!plan.commands[0].requires_root, "a user installation needs no privileges");
+        assert!(
+            !plan.commands[0].requires_root,
+            "a user installation needs no privileges"
+        );
         assert!(plan.is_executable());
         assert!(plan.notes.iter().any(|note| note.contains("~/.var/app")));
     }
@@ -856,7 +867,8 @@ mod tests {
             "Name: GNOME Platform\n",
         );
         let adapter = FlatpakAdapter::new(Arc::new(runner));
-        let component = ad_hoc_component("runtime/org.gnome.Platform/x86_64/48", InstallScope::System);
+        let component =
+            ad_hoc_component("runtime/org.gnome.Platform/x86_64/48", InstallScope::System);
         let request = OperationRequest::new(
             crate::domain::ComponentId::new("flatpak", "runtime/org.gnome.Platform/x86_64/48"),
             OperationKind::Remove,
@@ -864,11 +876,17 @@ mod tests {
         let plan = adapter.plan_operation(&request, &component).expect("plan");
 
         assert!(
-            plan.unknown.iter().any(|fact| fact.contains("which applications use this runtime")),
+            plan.unknown
+                .iter()
+                .any(|fact| fact.contains("which applications use this runtime")),
             "the dependency question must stay open: {:?}",
             plan.unknown
         );
-        assert!(plan.notes.iter().any(|note| note.contains("not reversible")));
+        assert!(
+            plan.notes
+                .iter()
+                .any(|note| note.contains("not reversible"))
+        );
     }
 
     #[test]
@@ -880,8 +898,13 @@ mod tests {
             crate::domain::ComponentId::new("flatpak", "../../etc/passwd"),
             OperationKind::Remove,
         );
-        let error = adapter.plan_operation(&request, &component).expect_err("must refuse");
-        assert!(matches!(error, AdapterError::InvalidId { .. }), "unexpected: {error}");
+        let error = adapter
+            .plan_operation(&request, &component)
+            .expect_err("must refuse");
+        assert!(
+            matches!(error, AdapterError::InvalidId { .. }),
+            "unexpected: {error}"
+        );
     }
 
     #[test]
@@ -895,10 +918,7 @@ mod tests {
         let adapter = FlatpakAdapter::new(Arc::new(runner));
         let plan = OperationPlan {
             adapter: "flatpak".to_string(),
-            target: crate::domain::ComponentId::new(
-                "flatpak",
-                "app/org.example.App/x86_64/stable",
-            ),
+            target: crate::domain::ComponentId::new("flatpak", "app/org.example.App/x86_64/stable"),
             target_name: "Example".to_string(),
             target_version: None,
             kind: OperationKind::Remove,
@@ -937,10 +957,7 @@ mod tests {
             status: crate::domain::ComponentStatus::Installed,
             confidence: crate::domain::DetectionConfidence::Authoritative,
             capabilities: flatpak_capabilities(),
-            detection: crate::domain::DetectionMethod::command(
-                "flatpak",
-                vec!["list".to_string()],
-            ),
+            detection: crate::domain::DetectionMethod::command("flatpak", vec!["list".to_string()]),
             installed_size: None,
             location: None,
             installed_at: None,

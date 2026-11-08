@@ -25,9 +25,10 @@ pub fn validate_flatpak_ref(value: &str) -> Result<(), &'static str> {
     if value.starts_with('-') {
         return Err("must not start with '-' (that would be read as an option)");
     }
-    if let Some(bad) = value.chars().find(|c| {
-        !(c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '+' | '-' | '/'))
-    }) {
+    if let Some(bad) = value
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '+' | '-' | '/')))
+    {
         return Err(reason_for(bad));
     }
     // `..` would let a reference name a directory outside the flatpak store.
@@ -84,8 +85,18 @@ mod tests {
 
     #[test]
     fn accepts_real_package_names() {
-        for name in ["firefox", "python-setuptools", "gcc-libs", "lib32-glibc", "c++utilities", "nodejs-nopt"] {
-            assert!(validate_pacman_name(name).is_ok(), "{name} should be accepted");
+        for name in [
+            "firefox",
+            "python-setuptools",
+            "gcc-libs",
+            "lib32-glibc",
+            "c++utilities",
+            "nodejs-nopt",
+        ] {
+            assert!(
+                validate_pacman_name(name).is_ok(),
+                "{name} should be accepted"
+            );
         }
         assert!(validate_pacman_name("a@b.c_d+e-f").is_ok());
     }
@@ -108,7 +119,10 @@ mod tests {
             "a<b",
         ];
         for value in hostile {
-            assert!(rejected(validate_pacman_name, value), "{value:?} must be rejected");
+            assert!(
+                rejected(validate_pacman_name, value),
+                "{value:?} must be rejected"
+            );
         }
     }
 
@@ -116,8 +130,18 @@ mod tests {
     fn rejects_flatpak_traversal_and_options() {
         assert!(validate_flatpak_ref("app/org.mozilla.firefox/x86_64/stable").is_ok());
         assert!(validate_flatpak_ref("org.mozilla.firefox").is_ok());
-        for value in ["../../etc/passwd", "-y", "app/../../../etc", "app id", "app;id", ""] {
-            assert!(rejected(validate_flatpak_ref, value), "{value:?} must be rejected");
+        for value in [
+            "../../etc/passwd",
+            "-y",
+            "app/../../../etc",
+            "app id",
+            "app;id",
+            "",
+        ] {
+            assert!(
+                rejected(validate_flatpak_ref, value),
+                "{value:?} must be rejected"
+            );
         }
     }
 

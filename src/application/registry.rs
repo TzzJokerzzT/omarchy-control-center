@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::domain::{
-    AdapterError, AdapterStatus, Component, ComponentId, ComponentAdapter, OperationKind,
+    AdapterError, AdapterStatus, Component, ComponentAdapter, ComponentId, DetailField,
+    OperationKind,
 };
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -25,9 +26,16 @@ pub enum RegistryError {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ProviderError {
     #[error("no adapter supports {} for {}", kind.label(), component)]
-    NoProvider { component: String, kind: OperationKind },
+    NoProvider {
+        component: String,
+        kind: OperationKind,
+    },
     #[error("{} for {} is ambiguous: {adapters}", kind.label(), component)]
-    Ambiguous { component: String, kind: OperationKind, adapters: String },
+    Ambiguous {
+        component: String,
+        kind: OperationKind,
+        adapters: String,
+    },
 }
 
 /// A failure attributed to one adapter and one stage. Never fatal for the run.
@@ -54,10 +62,6 @@ pub struct InventorySnapshot {
 }
 
 impl InventorySnapshot {
-    pub fn component(&self, id: &ComponentId) -> Option<&Component> {
-        self.components.iter().find(|component| &component.id == id)
-    }
-
     pub fn failure_count(&self) -> usize {
         self.failures.len() + self.duplicates.len()
     }
@@ -72,22 +76,19 @@ impl AdapterRegistry {
         let mut seen: BTreeMap<&'static str, ()> = BTreeMap::new();
         for adapter in &adapters {
             if seen.insert(adapter.id(), ()).is_some() {
-                return Err(RegistryError::DuplicateAdapterId { id: adapter.id().to_string() });
+                return Err(RegistryError::DuplicateAdapterId {
+                    id: adapter.id().to_string(),
+                });
             }
         }
         Ok(Self { adapters })
     }
 
-    pub fn adapters(&self) -> &[Box<dyn ComponentAdapter>] {
-        &self.adapters
-    }
-
     pub fn get(&self, id: &str) -> Option<&dyn ComponentAdapter> {
-        self.adapters.iter().find(|adapter| adapter.id() == id).map(|adapter| adapter.as_ref())
-    }
-
-    pub fn statuses(&self) -> Vec<AdapterStatus> {
-        self.adapters.iter().map(|adapter| guarded_status(adapter.as_ref())).collect()
+        self.adapters
+            .iter()
+            .find(|adapter| adapter.id() == id)
+            .map(|adapter| adapter.as_ref())
     }
 
     /// Loads every adapter, isolating failures, panics and duplicate identities.
@@ -139,7 +140,9 @@ impl AdapterRegistry {
             }
         }
 
-        snapshot.components.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
+        snapshot
+            .components
+            .sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
         snapshot
     }
 
@@ -156,6 +159,26 @@ impl AdapterRegistry {
                 id.adapter, id.native_id
             ))),
         }
+    }
+
+    /// Extra facts a secondary source can contribute about a component another
+    /// adapter owns — for example AUR metadata for a foreign pacman package. A
+    /// broken or panicking secondary source contributes nothing, because an
+    /// enrichment must never cost the detail view.
+    pub fn enrich(&self, component: &Component) -> Vec<DetailField> {
+        let mut fields = Vec::new();
+        for adapter in &self.adapters {
+            match catch_unwind(AssertUnwindSafe(|| adapter.enrich(component))) {
+                Ok(Some(more)) => fields.extend(more),
+                Ok(None) => {}
+                Err(_) => tracing::warn!(
+                    adapter = adapter.id(),
+                    component = %component.id,
+                    "adapter panicked while enriching a component"
+                ),
+            }
+        }
+        fields
     }
 
     /// Finds the single adapter allowed to run `kind` for `component`.
@@ -180,26 +203,14 @@ impl AdapterRegistry {
             _ => Err(ProviderError::Ambiguous {
                 component: component.id.to_string(),
                 kind,
-                adapters: claims.iter().map(|adapter| adapter.id()).collect::<Vec<_>>().join(", "),
+                adapters: claims
+                    .iter()
+                    .map(|adapter| adapter.id())
+                    .collect::<Vec<_>>()
+                    .join(", "),
             }),
         }
     }
-}
-
-fn guarded_status(adapter: &dyn ComponentAdapter) -> AdapterStatus {
-    guarded_status_opt(adapter).unwrap_or_else(|| AdapterStatus {
-        id: adapter.id().to_string(),
-        display_name: adapter.display_name().to_string(),
-        description: adapter.description().to_string(),
-        availability: crate::domain::AdapterAvailability::Unavailable {
-            reason: "adapter panicked while reporting its status".to_string(),
-        },
-        tool: None,
-        tool_version: None,
-        capabilities: Vec::new(),
-        commands: Vec::new(),
-        notes: Vec::new(),
-    })
 }
 
 fn guarded_status_opt(adapter: &dyn ComponentAdapter) -> Option<AdapterStatus> {
@@ -210,9 +221,9 @@ fn guarded_status_opt(adapter: &dyn ComponentAdapter) -> Option<AdapterStatus> {
 mod tests {
     use super::*;
     use crate::domain::{
-        AdapterAvailability, ComponentCapability, OperationOutcome, OperationPlan, OperationRequest,
-        PacmanOrigin, ComponentCategory, ComponentSource, ComponentStatus, DetectionConfidence,
-        DetectionMethod,
+        AdapterAvailability, ComponentCapability, ComponentCategory, ComponentSource,
+        ComponentStatus, DetectionConfidence, DetectionMethod, OperationOutcome, OperationPlan,
+        OperationRequest, PacmanOrigin,
     };
 
     struct Fake {
@@ -251,8 +262,9 @@ mod tests {
         }
 
         fn unavailable(mut self, reason: &str) -> Self {
-            self.availability =
-                AdapterAvailability::Unavailable { reason: reason.to_string() };
+            self.availability = AdapterAvailability::Unavailable {
+                reason: reason.to_string(),
+            };
             self
         }
     }
@@ -264,7 +276,9 @@ mod tests {
             version: Some("1.0-1".to_string()),
             description: None,
             category: ComponentCategory::Package,
-            source: ComponentSource::Pacman { origin: PacmanOrigin::Foreign },
+            source: ComponentSource::Pacman {
+                origin: PacmanOrigin::Foreign,
+            },
             status: ComponentStatus::Installed,
             confidence: DetectionConfidence::Authoritative,
             capabilities: vec![ComponentCapability::Inspect],
@@ -329,7 +343,9 @@ mod tests {
             }
             let foreign = matches!(
                 component.source,
-                ComponentSource::Pacman { origin: PacmanOrigin::Foreign }
+                ComponentSource::Pacman {
+                    origin: PacmanOrigin::Foreign
+                }
             );
             if self.owns_foreign { foreign } else { !foreign }
         }
@@ -348,8 +364,13 @@ mod tests {
     }
 
     fn registry(fakes: Vec<Fake>) -> AdapterRegistry {
-        AdapterRegistry::new(fakes.into_iter().map(|fake| Box::new(fake) as Box<dyn ComponentAdapter>).collect())
-            .expect("registry")
+        AdapterRegistry::new(
+            fakes
+                .into_iter()
+                .map(|fake| Box::new(fake) as Box<dyn ComponentAdapter>)
+                .collect(),
+        )
+        .expect("registry")
     }
 
     #[test]
@@ -360,7 +381,12 @@ mod tests {
         ])
         .err()
         .expect("duplicate id must be refused");
-        assert_eq!(error, RegistryError::DuplicateAdapterId { id: "pacman".to_string() });
+        assert_eq!(
+            error,
+            RegistryError::DuplicateAdapterId {
+                id: "pacman".to_string()
+            }
+        );
     }
 
     #[test]
@@ -373,9 +399,18 @@ mod tests {
 
         assert_eq!(snapshot.components.len(), 1);
         assert!(snapshot.failures.is_empty(), "unavailable is not a failure");
-        let flatpak = snapshot.statuses.iter().find(|status| status.id == "flatpak").expect("status");
+        let flatpak = snapshot
+            .statuses
+            .iter()
+            .find(|status| status.id == "flatpak")
+            .expect("status");
         assert!(!flatpak.available());
-        assert_eq!(flatpak.unavailable_reason(), Some("flatpak was not found"));
+        assert_eq!(
+            flatpak.availability,
+            AdapterAvailability::Unavailable {
+                reason: "flatpak was not found".to_string()
+            }
+        );
     }
 
     #[test]
@@ -445,21 +480,33 @@ mod tests {
             },
         ]);
         let foreign = sample("pacman", "some-aur-pkg");
-        let provider = with_aur.operation_provider(&foreign, OperationKind::Remove).expect("provider");
+        let provider = with_aur
+            .operation_provider(&foreign, OperationKind::Remove)
+            .expect("provider");
         assert_eq!(provider.id(), "aur");
 
         let ambiguous = registry(vec![Fake::new("pacman"), Fake::new("flatpak")]);
         let official = Component {
-            source: ComponentSource::Pacman { origin: PacmanOrigin::Official { repo: Some("extra".into()) } },
+            source: ComponentSource::Pacman {
+                origin: PacmanOrigin::Official {
+                    repo: Some("extra".into()),
+                },
+            },
             ..sample("pacman", "btop")
         };
-        let error = ambiguous.operation_provider(&official, OperationKind::Remove).err().expect("ambiguity");
+        let error = ambiguous
+            .operation_provider(&official, OperationKind::Remove)
+            .err()
+            .expect("ambiguity");
         assert!(matches!(error, ProviderError::Ambiguous { .. }));
     }
 
     #[test]
     fn no_provider_means_the_action_is_not_offered() {
-        let no_remove = registry(vec![Fake { claims_remove: false, ..Fake::new("pacman") }]);
+        let no_remove = registry(vec![Fake {
+            claims_remove: false,
+            ..Fake::new("pacman")
+        }]);
         let error = no_remove
             .operation_provider(&sample("pacman", "btop"), OperationKind::Remove)
             .err()

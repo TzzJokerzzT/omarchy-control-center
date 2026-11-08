@@ -9,10 +9,10 @@ use std::sync::Once;
 
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::execute;
 
 pub struct TerminalSession {
     active: bool,
@@ -46,10 +46,6 @@ impl TerminalSession {
         execute!(stdout(), EnterAlternateScreen, Hide, EnableBracketedPaste)?;
         self.active = true;
         Ok(())
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.active
     }
 }
 

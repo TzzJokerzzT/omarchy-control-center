@@ -9,8 +9,7 @@
 //! is exactly the guarantee we want for a destructive action.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -18,10 +17,10 @@ use crossterm::event::{self, Event as TerminalEvent, KeyCode, KeyEvent, KeyEvent
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::application::operations::{self, OperationRecord, PendingOperation};
 use crate::application::ConfirmDecision;
+use crate::application::operations::{self, OperationRecord, PendingOperation};
 use crate::application::{AdapterRegistry, InventorySnapshot, search};
-use crate::domain::{Component, OperationKind, SourceGroup};
+use crate::domain::{Component, ComponentId, DetailField, OperationKind, SourceGroup};
 use crate::infrastructure::history::History;
 use crate::infrastructure::system::SystemInfo;
 use crate::term::TerminalSession;
@@ -72,6 +71,10 @@ pub struct UiState {
     pub pending: Option<PendingOperation>,
     pub plan_input: String,
     pub last_record: Option<OperationRecord>,
+    /// Extra facts for the open detail view, with the component they belong to.
+    pub enrichment: Option<(ComponentId, Vec<DetailField>)>,
+    /// A lookup the loop must run off the draw path.
+    pub enrich_requested: Option<Component>,
     pub history: History,
     pub history_entries: Vec<OperationRecord>,
     pub history_selected: usize,
@@ -80,7 +83,12 @@ pub struct UiState {
 }
 
 impl UiState {
-    pub fn new(system: SystemInfo, read_only: bool, notices: Vec<String>, history: History) -> Self {
+    pub fn new(
+        system: SystemInfo,
+        read_only: bool,
+        notices: Vec<String>,
+        history: History,
+    ) -> Self {
         let status_line = if read_only {
             "read-only mode: destructive actions are disabled".to_string()
         } else {
@@ -105,6 +113,8 @@ impl UiState {
             pending: None,
             plan_input: String::new(),
             last_record: None,
+            enrichment: None,
+            enrich_requested: None,
             history,
             history_entries: Vec::new(),
             history_selected: 0,
@@ -149,7 +159,8 @@ impl UiState {
                 .components
                 .iter()
                 .filter(|component| {
-                    self.group_filter.is_none_or(|group| component.source.group() == group)
+                    self.group_filter
+                        .is_none_or(|group| component.source.group() == group)
                 })
                 .collect();
         }
@@ -159,16 +170,23 @@ impl UiState {
             .components
             .iter()
             .filter(|component| {
-                self.group_filter.is_none_or(|group| component.source.group() == group)
+                self.group_filter
+                    .is_none_or(|group| component.source.group() == group)
             })
             .filter_map(|component| {
                 search::score_component(query, component).map(|(score, _)| (score, component))
             })
             .collect();
         matched.sort_by(|left, right| {
-            right.0.cmp(&left.0).then_with(|| left.1.sort_key().cmp(&right.1.sort_key()))
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| left.1.sort_key().cmp(&right.1.sort_key()))
         });
-        matched.into_iter().map(|(_, component)| component).collect()
+        matched
+            .into_iter()
+            .map(|(_, component)| component)
+            .collect()
     }
 
     pub fn selected_component(&self) -> Option<&Component> {
@@ -186,9 +204,8 @@ impl UiState {
                         "no component could be loaded: open the adapters view (a)".to_string();
                 }
             }
-            Message::Failed(message) => {
-                self.loading = false;
-                self.status_line = message;
+            Message::Enriched { id, fields } => {
+                self.enrichment = Some((id, fields));
             }
         }
     }
@@ -220,7 +237,11 @@ impl UiState {
         }
         let next = self.sidebar_index as isize + delta;
         self.sidebar_index = next.clamp(0, count as isize - 1) as usize;
-        self.group_filter = self.sidebar_groups().get(self.sidebar_index).copied().flatten();
+        self.group_filter = self
+            .sidebar_groups()
+            .get(self.sidebar_index)
+            .copied()
+            .flatten();
         self.selected = 0;
     }
 
@@ -282,10 +303,7 @@ impl UiState {
         match operations::prepare(actions.registry, &component, kind, self.read_only) {
             Ok(pending) => {
                 if pending.is_blocked() {
-                    self.status_line = format!(
-                        "blocked: {}",
-                        pending.plan.blocking.join("; ")
-                    );
+                    self.status_line = format!("blocked: {}", pending.plan.blocking.join("; "));
                 } else {
                     self.status_line.clear();
                 }
@@ -300,7 +318,9 @@ impl UiState {
     /// Runs the confirmed plan: re-verifies it, hands the terminal over when the
     /// command needs it, and records the real outcome.
     fn confirm_operation(&mut self, actions: &mut Actions<'_>) {
-        let Some(pending) = self.pending.clone() else { return };
+        let Some(pending) = self.pending.clone() else {
+            return;
+        };
 
         match crate::application::decide(&pending, &self.plan_input) {
             ConfirmDecision::Execute => {}
@@ -309,7 +329,8 @@ impl UiState {
                 return;
             }
             ConfirmDecision::PhraseMismatch { expected } => {
-                self.status_line = format!("type exactly '{expected}' to confirm, or Esc to cancel");
+                self.status_line =
+                    format!("type exactly '{expected}' to confirm, or Esc to cancel");
                 return;
             }
         }
@@ -331,7 +352,11 @@ impl UiState {
             Ok(outcome) => {
                 let record = OperationRecord::from_outcome(&pending.plan, &outcome, started);
                 self.status_line = if outcome.success {
-                    format!("{} completed: {}", pending.plan.kind.label(), pending.plan.target_name)
+                    format!(
+                        "{} completed: {}",
+                        pending.plan.kind.label(),
+                        pending.plan.target_name
+                    )
                 } else {
                     format!(
                         "{} failed with exit code {:?}: {}",
@@ -342,8 +367,10 @@ impl UiState {
                 };
                 if let Err(error) = self.history.append(&record) {
                     // The outcome still stands; losing the audit line must be visible.
-                    self.status_line = format!("{}. WARNING: the history could not be written: {error}",
-                        self.status_line);
+                    self.status_line = format!(
+                        "{}. WARNING: the history could not be written: {error}",
+                        self.status_line
+                    );
                 }
                 self.last_record = Some(record);
                 self.pending = None;
@@ -453,7 +480,16 @@ impl UiState {
                 Screen::Inventory => match self.focus {
                     Focus::Sidebar => self.focus = Focus::List,
                     Focus::List => {
-                        if self.selected_component().is_some() {
+                        if let Some(component) = self.selected_component().cloned() {
+                            // Secondary facts are looked up in the background; the
+                            // pane shows they are pending instead of blocking.
+                            if self
+                                .enrichment
+                                .as_ref()
+                                .is_none_or(|(id, _)| id != &component.id)
+                            {
+                                self.enrich_requested = Some(component);
+                            }
                             self.open(Screen::Details);
                         }
                     }
@@ -472,10 +508,8 @@ impl UiState {
             KeyCode::Down | KeyCode::Char('j') => match (self.screen, self.focus) {
                 (Screen::Inventory, Focus::Sidebar) => self.move_sidebar(1),
                 (Screen::Inventory, Focus::List) => self.move_selection(1),
-                (Screen::History, _) => {
-                    if self.history_selected + 1 < self.history_entries.len() {
-                        self.history_selected += 1;
-                    }
+                (Screen::History, _) if self.history_selected + 1 < self.history_entries.len() => {
+                    self.history_selected += 1;
                 }
                 _ => {}
             },
@@ -484,10 +518,10 @@ impl UiState {
                     self.focus = Focus::List;
                 }
             }
-            KeyCode::Left | KeyCode::Char('h') => {
-                if self.screen == Screen::Inventory && self.focus == Focus::List {
-                    self.focus = Focus::Sidebar;
-                }
+            KeyCode::Left | KeyCode::Char('h')
+                if self.screen == Screen::Inventory && self.focus == Focus::List =>
+            {
+                self.focus = Focus::Sidebar;
             }
             _ => {}
         }
@@ -496,7 +530,10 @@ impl UiState {
 
 enum Message {
     Loaded(Box<InventorySnapshot>),
-    Failed(String),
+    Enriched {
+        id: ComponentId,
+        fields: Vec<DetailField>,
+    },
 }
 
 pub struct Bootstrap {
@@ -510,13 +547,11 @@ pub struct Bootstrap {
 pub fn run(bootstrap: Bootstrap) -> anyhow::Result<()> {
     let mut session = TerminalSession::enter().context("cannot take control of the terminal")?;
     let backend = CrosstermBackend::new(std::io::stdout());
-    let mut terminal =
-        Terminal::new(backend).context("cannot initialise the terminal renderer")?;
+    let mut terminal = Terminal::new(backend).context("cannot initialise the terminal renderer")?;
     terminal.clear().ok();
 
-    let cancel = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = mpsc::channel();
-    spawn_loader(Arc::clone(&bootstrap.registry), sender.clone(), Arc::clone(&cancel));
+    spawn_loader(Arc::clone(&bootstrap.registry), sender.clone());
 
     let mut state = UiState::new(
         bootstrap.system,
@@ -525,22 +560,22 @@ pub fn run(bootstrap: Bootstrap) -> anyhow::Result<()> {
         bootstrap.history,
     );
     let registry = Arc::clone(&bootstrap.registry);
-    let outcome = event_loop(&mut terminal, &mut state, &receiver, &registry, &mut session, &sender);
-    cancel.store(true, Ordering::Relaxed);
-
+    let outcome = event_loop(
+        &mut terminal,
+        &mut state,
+        &receiver,
+        &registry,
+        &mut session,
+        &sender,
+    );
     drop(terminal);
     session.suspend().ok();
     outcome
 }
 
-fn spawn_loader(
-    registry: Arc<AdapterRegistry>,
-    sender: mpsc::Sender<Message>,
-    cancel: Arc<AtomicBool>,
-) {
+fn spawn_loader(registry: Arc<AdapterRegistry>, sender: mpsc::Sender<Message>) {
     std::thread::spawn(move || {
         let snapshot = registry.load_all();
-        let _ = cancel.load(Ordering::Relaxed);
         let _ = sender.send(Message::Loaded(Box::new(snapshot)));
     });
 }
@@ -554,17 +589,26 @@ fn event_loop(
     sender: &mpsc::Sender<Message>,
 ) -> anyhow::Result<()> {
     loop {
-        loop {
-            match receiver.try_recv() {
-                Ok(message) => state.apply(message),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-            }
+        while let Ok(message) = receiver.try_recv() {
+            state.apply(message);
+        }
+
+        if let Some(component) = state.enrich_requested.take() {
+            let registry = Arc::clone(registry);
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                let fields = registry.enrich(&component);
+                let _ = sender.send(Message::Enriched {
+                    id: component.id,
+                    fields,
+                });
+            });
         }
 
         if state.reload_requested {
             state.reload_requested = false;
             state.loading = true;
-            spawn_loader(Arc::clone(registry), sender.clone(), Arc::new(AtomicBool::new(false)));
+            spawn_loader(Arc::clone(registry), sender.clone());
         }
 
         if state.needs_full_redraw {
@@ -581,7 +625,10 @@ fn event_loop(
         if event::poll(Duration::from_millis(120)).context("cannot poll terminal events")? {
             match event::read().context("cannot read a terminal event")? {
                 TerminalEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                    let mut actions = Actions { registry: registry.as_ref(), session };
+                    let mut actions = Actions {
+                        registry: registry.as_ref(),
+                        session,
+                    };
                     state.on_key(key, &mut actions);
                 }
                 TerminalEvent::Resize(_, _) => state.needs_full_redraw = true,

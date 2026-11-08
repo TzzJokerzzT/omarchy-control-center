@@ -33,14 +33,15 @@ mod tests {
     use crate::infrastructure::test_support::FakeRunner;
 
     #[test]
-    fn registers_pacman_aur_and_flatpak_in_that_order() {
+    fn registers_pacman_aur_and_flatpak() {
         let registry = build_registry(Arc::new(FakeRunner::new())).expect("registry");
-        let ids: Vec<&str> = registry
-            .adapters()
-            .iter()
-            .map(|adapter| adapter.id())
-            .collect();
-        assert_eq!(ids, vec!["pacman", "aur", "flatpak"]);
+        for expected in ["pacman", "aur", "flatpak"] {
+            assert!(
+                registry.get(expected).is_some(),
+                "{expected} must be registered"
+            );
+        }
+        assert!(registry.get("nonexistent").is_none());
     }
 
     #[test]

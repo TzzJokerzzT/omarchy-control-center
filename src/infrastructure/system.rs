@@ -46,10 +46,6 @@ impl SystemInfo {
             None => name.to_string(),
         }
     }
-
-    pub fn is_root(&self) -> bool {
-        self.euid == Some(0)
-    }
 }
 
 /// Why the application refuses to start.
@@ -93,7 +89,9 @@ impl OsRelease {
     pub fn parse(text: &str) -> Self {
         let mut release = Self::default();
         for line in text.lines() {
-            let Some((key, value)) = line.split_once('=') else { continue };
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
             let value = value.trim().trim_matches('"').to_string();
             match key.trim() {
                 "NAME" => release.os_name = Some(value),

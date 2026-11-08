@@ -26,7 +26,12 @@ impl QiRecord {
     /// Whitespace-separated values, the shape pacman uses for dependency lists.
     pub fn list(&self, key: &str) -> Vec<String> {
         self.get(key)
-            .map(|value| value.split_whitespace().map(|item| item.to_string()).collect())
+            .map(|value| {
+                value
+                    .split_whitespace()
+                    .map(|item| item.to_string())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
@@ -40,7 +45,9 @@ pub fn parse_qi(text: &str) -> Vec<QiRecord> {
     for line in text.lines() {
         if line.trim().is_empty() {
             if !fields.is_empty() {
-                records.push(QiRecord { fields: std::mem::take(&mut fields) });
+                records.push(QiRecord {
+                    fields: std::mem::take(&mut fields),
+                });
                 current = None;
             }
             continue;
@@ -48,16 +55,18 @@ pub fn parse_qi(text: &str) -> Vec<QiRecord> {
 
         let is_continuation = line.starts_with(' ') || line.starts_with('\t');
         if is_continuation {
-            if let Some(key) = &current {
-                if let Some((_, value)) = fields.iter_mut().rev().find(|(field, _)| field == key) {
-                    value.push(' ');
-                    value.push_str(line.trim());
-                }
+            if let Some(key) = &current
+                && let Some((_, value)) = fields.iter_mut().rev().find(|(field, _)| field == key)
+            {
+                value.push(' ');
+                value.push_str(line.trim());
             }
             continue;
         }
 
-        let Some((key, value)) = line.split_once(':') else { continue };
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
         let key = key.trim().to_string();
         let value = value.trim().to_string();
         if key.is_empty() {
@@ -115,7 +124,10 @@ pub fn parse_size(text: &str) -> Option<u64> {
 /// Reads the `Repository` field out of `pacman -Si` output.
 pub fn parse_repository(text: &str) -> Option<String> {
     text.lines()
-        .find_map(|line| line.strip_prefix("Repository").and_then(|rest| rest.split_once(':')))
+        .find_map(|line| {
+            line.strip_prefix("Repository")
+                .and_then(|rest| rest.split_once(':'))
+        })
         .map(|(_, value)| value.trim().to_string())
         .filter(|value| !value.is_empty() && value != "None")
 }
@@ -155,10 +167,21 @@ mod tests {
         let optional = libfoo.list("Optional Deps");
         assert_eq!(
             optional,
-            vec!["gdb:", "debugging", "symbols", "[installed]", "lldb:", "alternative", "debugger"],
+            vec![
+                "gdb:",
+                "debugging",
+                "symbols",
+                "[installed]",
+                "lldb:",
+                "alternative",
+                "debugger"
+            ],
             "continuation lines belong to the same field: {optional:?}"
         );
-        assert_eq!(libfoo.get("Optional Deps"), Some("gdb: debugging symbols [installed] lldb: alternative debugger"));
+        assert_eq!(
+            libfoo.get("Optional Deps"),
+            Some("gdb: debugging symbols [installed] lldb: alternative debugger")
+        );
     }
 
     #[test]
@@ -199,7 +222,10 @@ mod tests {
             parse_name_list(QM).into_iter().collect::<Vec<_>>(),
             vec!["libfoo".to_string(), "yay".to_string()]
         );
-        assert_eq!(parse_name_list(QDTQ).into_iter().collect::<Vec<_>>(), vec!["libfoo".to_string()]);
+        assert_eq!(
+            parse_name_list(QDTQ).into_iter().collect::<Vec<_>>(),
+            vec!["libfoo".to_string()]
+        );
         assert!(parse_name_list("").is_empty());
     }
 

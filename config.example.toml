@@ -1,0 +1,16 @@
+# Omarchy Control Center configuration.
+#
+# Copy to ~/.config/omarchy-control-center/config.toml
+# A missing file is not an error; an invalid file is reported and the defaults are
+# used, so a typo never prevents the inventory from opening.
+
+# Explore the inventory without exposing any destructive action.
+# Equivalent to starting the program with --read-only.
+read_only = false
+
+# Extra directories searched for tools such as pacman, yay or flatpak.
+# They are prepended in this order, before the inherited PATH: the first directory
+# that provides a program wins. Use this to point the program at a wrapper or at a
+# tool installed outside the default prefix.
+extra_search_paths = []
+# extra_search_paths = ["/usr/local/bin", "/home/you/.local/bin"]

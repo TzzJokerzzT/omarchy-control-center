@@ -8,11 +8,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
 
-use crate::infrastructure::process::{
-    CommandOutput, CommandRunner, CommandSpec, ProcessError,
-};
+use crate::infrastructure::process::{CommandOutput, CommandRunner, CommandSpec, ProcessError};
 
 #[derive(Default)]
 pub struct FakeRunner {
@@ -72,7 +69,10 @@ impl FakeRunner {
 
     /// Every command that was actually attempted, in order.
     pub fn calls(&self) -> Vec<String> {
-        self.calls.lock().map(|calls| calls.clone()).unwrap_or_default()
+        self.calls
+            .lock()
+            .map(|calls| calls.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -90,15 +90,9 @@ impl CommandRunner for FakeRunner {
         }
         match self.responses.get(&spec.display()) {
             Some(result) => result.clone(),
-            None => Err(ProcessError::NotFound { program: format!("{} (not registered)", spec.display()) }),
+            None => Err(ProcessError::NotFound {
+                program: format!("{} (not registered)", spec.display()),
+            }),
         }
-    }
-
-    fn run_cancellable(
-        &self,
-        spec: &CommandSpec,
-        _cancel: &AtomicBool,
-    ) -> Result<CommandOutput, ProcessError> {
-        self.run(spec)
     }
 }

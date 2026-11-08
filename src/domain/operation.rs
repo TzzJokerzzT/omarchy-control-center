@@ -25,11 +25,6 @@ impl OperationKind {
             Self::Update => "update",
         }
     }
-
-    /// Removal deletes data; updates can still break a working system.
-    pub fn is_destructive(self) -> bool {
-        matches!(self, Self::Remove)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,10 +86,6 @@ impl OperationPlan {
         self.blocking.is_empty() && !self.commands.is_empty()
     }
 
-    pub fn requires_root(&self) -> bool {
-        self.commands.iter().any(|command| command.requires_root)
-    }
-
     pub fn requires_tty(&self) -> bool {
         self.commands.iter().any(|command| command.requires_tty)
     }
@@ -142,19 +133,6 @@ pub struct OperationOutcome {
     pub summary: String,
 }
 
-impl OperationOutcome {
-    pub fn failure(command_display: impl Into<String>, exit_code: Option<i32>, stderr: &str) -> Self {
-        Self {
-            success: false,
-            exit_code,
-            command_display: command_display.into(),
-            stdout_tail: String::new(),
-            stderr_tail: tail_text(stderr, 2000),
-            summary: "operation failed".to_string(),
-        }
-    }
-}
-
 /// Keeps the end of a command output, which is where the error is, without
 /// breaking a UTF-8 boundary.
 pub fn tail_text(text: &str, max: usize) -> String {
@@ -162,7 +140,9 @@ pub fn tail_text(text: &str, max: usize) -> String {
         return text.to_string();
     }
     let start = text.len() - max;
-    let start = (start..text.len()).find(|index| text.is_char_boundary(*index)).unwrap_or(text.len());
+    let start = (start..text.len())
+        .find(|index| text.is_char_boundary(*index))
+        .unwrap_or(text.len());
     format!("…{}", &text[start..])
 }
 
@@ -221,7 +201,10 @@ mod tests {
         let base = plan(Vec::new(), vec!["libfoo".to_string()]);
         let same = plan(Vec::new(), vec!["libfoo".to_string()]);
         let more_affected = plan(Vec::new(), vec!["libfoo".to_string(), "libbar".to_string()]);
-        let now_blocked = plan(vec!["required by: hyprland".to_string()], vec!["libfoo".to_string()]);
+        let now_blocked = plan(
+            vec!["required by: hyprland".to_string()],
+            vec!["libfoo".to_string()],
+        );
 
         assert_eq!(base.fingerprint(), same.fingerprint());
         assert_ne!(base.fingerprint(), more_affected.fingerprint());

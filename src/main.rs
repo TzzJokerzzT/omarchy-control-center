@@ -16,13 +16,13 @@ use std::sync::Arc;
 
 use anyhow::Context;
 
+use crate::application::{AdapterRegistry, operations};
 use crate::cli::Args;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::history::History;
 use crate::infrastructure::paths::AppPaths;
-use crate::infrastructure::system::{SystemInfo, guard_not_root};
-use crate::application::{AdapterRegistry, operations};
 use crate::infrastructure::process::SystemRunner;
+use crate::infrastructure::system::{SystemInfo, guard_not_root};
 
 fn main() -> ExitCode {
     let args = Args::parse_args();
@@ -77,15 +77,23 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
 
     let read_only = args.read_only || config.read_only;
 
-    let runner: Arc<dyn infrastructure::process::CommandRunner> = match &args.extra_search_path {
-        Some(dir) => Arc::new(SystemRunner::with_extra_path(dir)),
-        None => Arc::new(SystemRunner::new()),
-    };
-    for extra in &config.extra_search_paths {
-        tracing::info!(path = %extra.display(), "configured extra search path");
+    // Order matters and is documented: --extra-search-path first, then the
+    // configured paths, then the inherited PATH.
+    let mut search_paths: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(dir) = &args.extra_search_path {
+        search_paths.push(dir.clone());
     }
-    let registry =
-        adapters::build_registry(Arc::clone(&runner)).context("cannot build the adapter registry")?;
+    search_paths.extend(config.extra_search_paths.iter().cloned());
+    let runner: Arc<dyn infrastructure::process::CommandRunner> = if search_paths.is_empty() {
+        Arc::new(SystemRunner::new())
+    } else {
+        for extra in &search_paths {
+            tracing::info!(path = %extra.display(), "prepended search path");
+        }
+        Arc::new(SystemRunner::with_extra_paths(search_paths))
+    };
+    let registry = adapters::build_registry(Arc::clone(&runner))
+        .context("cannot build the adapter registry")?;
 
     if args.print_inventory {
         return print_inventory(&registry, args.adapter.as_deref()).map(|()| ExitCode::SUCCESS);
@@ -176,9 +184,7 @@ fn print_inventory(registry: &AdapterRegistry, only_adapter: Option<&str>) -> an
         components: snapshot
             .components
             .iter()
-            .filter(|component| {
-                only_adapter.is_none_or(|wanted| component.id.adapter == wanted)
-            })
+            .filter(|component| only_adapter.is_none_or(|wanted| component.id.adapter == wanted))
             .collect(),
         failures: snapshot.failures.iter().collect(),
         duplicates: snapshot.duplicates.iter().collect(),

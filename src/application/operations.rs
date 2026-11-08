@@ -86,7 +86,9 @@ pub fn decide(pending: &PendingOperation, typed: &str) -> ConfirmDecision {
         return ConfirmDecision::Blocked(pending.plan.blocking.clone());
     }
     if !pending.confirmation_satisfied(typed) {
-        return ConfirmDecision::PhraseMismatch { expected: pending.confirmation_phrase().to_string() };
+        return ConfirmDecision::PhraseMismatch {
+            expected: pending.confirmation_phrase().to_string(),
+        };
     }
     ConfirmDecision::Execute
 }
@@ -140,16 +142,6 @@ fn refreshed_and_verified(
         return Err(PrepareError::Drift);
     }
     Ok(refreshed)
-}
-
-/// Recomputes the plan and refuses to continue if anything decision-relevant
-/// changed. This is the check that makes a stale preview harmless.
-pub fn revalidate(
-    registry: &AdapterRegistry,
-    pending: &PendingOperation,
-    read_only: bool,
-) -> Result<(), PrepareError> {
-    refreshed_and_verified(registry, pending, read_only).map(|_| ())
 }
 
 /// Re-verifies and then executes exactly the confirmed plan.
@@ -422,7 +414,7 @@ mod tests {
             prepare(&registry, &component("btop"), OperationKind::Remove, false).expect("plan");
         assert_eq!(pending.plan.commands[0].display(), "pacman -R btop");
         assert_eq!(pending.confirmation_phrase(), "btop");
-        assert!(pending.plan.requires_root());
+        assert!(pending.plan.commands[0].requires_root);
         assert!(
             pending
                 .plan
@@ -503,13 +495,16 @@ mod tests {
     #[test]
     fn an_unconfirmed_phrase_never_decides_to_execute() {
         let (registry, _state) = setup();
-        let pending = prepare(&registry, &component("btop"), OperationKind::Remove, false).expect("plan");
+        let pending =
+            prepare(&registry, &component("btop"), OperationKind::Remove, false).expect("plan");
 
         assert_eq!(decide(&pending, "btop"), ConfirmDecision::Execute);
         for wrong in ["", "y", "yes", "BT", "btop2", "btop now"] {
             assert_eq!(
                 decide(&pending, wrong),
-                ConfirmDecision::PhraseMismatch { expected: "btop".to_string() },
+                ConfirmDecision::PhraseMismatch {
+                    expected: "btop".to_string()
+                },
                 "{wrong:?} must not confirm"
             );
         }
@@ -519,9 +514,13 @@ mod tests {
     fn a_blocked_plan_decides_blocked_even_with_the_right_phrase() {
         let (registry, state) = setup();
         state.blocked.store(true, Ordering::SeqCst);
-        let pending = prepare(&registry, &component("btop"), OperationKind::Remove, false).expect("plan");
+        let pending =
+            prepare(&registry, &component("btop"), OperationKind::Remove, false).expect("plan");
         assert!(pending.is_blocked());
-        assert!(matches!(decide(&pending, "btop"), ConfirmDecision::Blocked(_)));
+        assert!(matches!(
+            decide(&pending, "btop"),
+            ConfirmDecision::Blocked(_)
+        ));
     }
 
     #[test]

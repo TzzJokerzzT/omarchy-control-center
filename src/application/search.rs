@@ -20,8 +20,14 @@ pub fn score(query: &str, haystack: &str) -> Option<i32> {
     if query.is_empty() {
         return Some(0);
     }
-    let query: Vec<char> = query.chars().flat_map(|character| character.to_lowercase()).collect();
-    let haystack: Vec<char> = haystack.chars().flat_map(|character| character.to_lowercase()).collect();
+    let query: Vec<char> = query
+        .chars()
+        .flat_map(|character| character.to_lowercase())
+        .collect();
+    let haystack: Vec<char> = haystack
+        .chars()
+        .flat_map(|character| character.to_lowercase())
+        .collect();
 
     if query.len() > haystack.len() {
         return None;
@@ -46,8 +52,8 @@ pub fn score(query: &str, haystack: &str) -> Option<i32> {
         if previous_match.is_some_and(|previous| previous + 1 == position) {
             total += CONSECUTIVE_BONUS;
         }
-        let starts_word = position == 0
-            || matches!(haystack[position - 1], ' ' | '-' | '_' | '.' | '/' | ':');
+        let starts_word =
+            position == 0 || matches!(haystack[position - 1], ' ' | '-' | '_' | '.' | '/' | ':');
         if starts_word {
             total += WORD_START_BONUS;
         }
@@ -100,7 +106,9 @@ mod tests {
             version: Some("1.0-1".to_string()),
             description: description.map(|value| value.to_string()),
             category: ComponentCategory::Package,
-            source: ComponentSource::Pacman { origin: PacmanOrigin::Foreign },
+            source: ComponentSource::Pacman {
+                origin: PacmanOrigin::Foreign,
+            },
             status: ComponentStatus::Installed,
             confidence: DetectionConfidence::Authoritative,
             capabilities: vec![ComponentCapability::Inspect],
@@ -118,7 +126,10 @@ mod tests {
     fn an_empty_query_matches_everything_neutrally() {
         assert_eq!(score("", "anything"), Some(0));
         assert_eq!(score_component("", &component("btop", None)), Some((0, "")));
-        assert_eq!(score_component("   ", &component("btop", None)), Some((0, "")));
+        assert_eq!(
+            score_component("   ", &component("btop", None)),
+            Some((0, ""))
+        );
     }
 
     #[test]
@@ -138,7 +149,10 @@ mod tests {
     fn a_prefix_scores_higher_than_a_scattered_match() {
         let prefix = score("btop", "btop").expect("prefix");
         let scattered = score("btop", "b-t-o-p-extra").expect("scattered");
-        assert!(prefix > scattered, "prefix {prefix} should beat scattered {scattered}");
+        assert!(
+            prefix > scattered,
+            "prefix {prefix} should beat scattered {scattered}"
+        );
     }
 
     #[test]
@@ -151,8 +165,14 @@ mod tests {
     #[test]
     fn matches_the_description_and_the_identifier_too() {
         let btop = component("btop", Some("A monitor of system resources"));
-        assert_eq!(score_component("monitor", &btop).map(|(_, field)| field), Some("description"));
-        assert_eq!(score_component("btop", &btop).map(|(_, field)| field), Some("name"));
+        assert_eq!(
+            score_component("monitor", &btop).map(|(_, field)| field),
+            Some("description")
+        );
+        assert_eq!(
+            score_component("btop", &btop).map(|(_, field)| field),
+            Some("name")
+        );
         assert!(score_component("nothing-like-this", &btop).is_none());
     }
 
@@ -160,7 +180,10 @@ mod tests {
     fn reports_the_field_that_matched_best() {
         let btop = component("btop", Some("btop is a monitor"));
         let (score, field) = score_component("btop", &btop).expect("match");
-        assert_eq!(field, "name", "the name wins over the description: score {score}");
+        assert_eq!(
+            field, "name",
+            "the name wins over the description: score {score}"
+        );
     }
 
     #[test]

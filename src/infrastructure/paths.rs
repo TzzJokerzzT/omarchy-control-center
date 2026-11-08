@@ -1,7 +1,7 @@
 //! XDG locations. Configuration and history live in the user's own directories and
 //! are created with owner-only permissions.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use thiserror::Error;
 
@@ -42,7 +42,10 @@ impl AppPaths {
         };
         let state_dir = match state_home {
             Some(dir) => dir.join("omarchy-control-center"),
-            None => home_dir()?.join(".local").join("state").join("omarchy-control-center"),
+            None => home_dir()?
+                .join(".local")
+                .join("state")
+                .join("omarchy-control-center"),
         };
 
         Ok(Self::with_roots(config_dir, state_dir, config_override))
@@ -53,11 +56,16 @@ impl AppPaths {
         state_dir: PathBuf,
         config_override: Option<PathBuf>,
     ) -> Self {
-        let config_file = config_override
-            .unwrap_or_else(|| config_dir.join("config.toml"));
+        let config_file = config_override.unwrap_or_else(|| config_dir.join("config.toml"));
         let history_file = state_dir.join("history.jsonl");
         let log_file = state_dir.join("occ.log");
-        Self { config_dir, state_dir, config_file, history_file, log_file }
+        Self {
+            config_dir,
+            state_dir,
+            config_file,
+            history_file,
+            log_file,
+        }
     }
 
     /// Creates the directories with owner-only permissions.
@@ -71,37 +79,19 @@ impl AppPaths {
                 .recursive(true)
                 .mode(0o700)
                 .create(dir)
-                .map_err(|source| PathError::Create { path: dir.clone(), source })?;
+                .map_err(|source| PathError::Create {
+                    path: dir.clone(),
+                    source,
+                })?;
         }
         Ok(())
     }
 }
 
 fn home_dir() -> Result<PathBuf, PathError> {
-    std::env::var_os("HOME").map(PathBuf::from).ok_or(PathError::NoHome)
-}
-
-/// Writes a file only its owner can read (mode 0600), replacing it atomically
-/// when the platform allows it.
-pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let temporary = path.with_extension("tmp");
-    {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        file.write_all(contents.as_bytes())?;
-        file.sync_all()?;
-    }
-    std::fs::rename(&temporary, path)
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or(PathError::NoHome)
 }
 
 #[cfg(test)]
@@ -116,19 +106,9 @@ mod tests {
             Some(PathBuf::from("/tmp/custom.toml")),
         );
         assert_eq!(paths.config_file, PathBuf::from("/tmp/custom.toml"));
-        assert_eq!(paths.history_file, PathBuf::from("/tmp/occ-state/history.jsonl"));
-    }
-
-    #[test]
-    fn private_writes_are_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("occ-paths-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let file = dir.join("secret.txt");
-        write_private(&file, "content").expect("write");
-        let mode = std::fs::metadata(&file).expect("stat").permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
-        assert_eq!(std::fs::read_to_string(&file).expect("read"), "content");
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            paths.history_file,
+            PathBuf::from("/tmp/occ-state/history.jsonl")
+        );
     }
 }
