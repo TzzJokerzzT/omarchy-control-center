@@ -5,4 +5,6 @@ pub mod logging;
 pub mod paths;
 pub mod process;
 pub mod system;
+#[cfg(test)]
+pub mod test_support;
 pub mod validate;

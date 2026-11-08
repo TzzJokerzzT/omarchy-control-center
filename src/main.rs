@@ -21,6 +21,7 @@ use crate::infrastructure::config::Config;
 use crate::infrastructure::paths::AppPaths;
 use crate::infrastructure::system::{SystemInfo, guard_not_root};
 use crate::application::AdapterRegistry;
+use crate::infrastructure::process::SystemRunner;
 
 fn main() -> ExitCode {
     let args = Args::parse_args();
@@ -74,7 +75,16 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
     }
 
     let read_only = args.read_only || config.read_only;
-    let registry = adapters::build_registry().context("cannot build the adapter registry")?;
+
+    let runner: Arc<dyn infrastructure::process::CommandRunner> = match &args.extra_search_path {
+        Some(dir) => Arc::new(SystemRunner::with_extra_path(dir)),
+        None => Arc::new(SystemRunner::new()),
+    };
+    for extra in &config.extra_search_paths {
+        tracing::info!(path = %extra.display(), "configured extra search path");
+    }
+    let registry =
+        adapters::build_registry(Arc::clone(&runner)).context("cannot build the adapter registry")?;
 
     if args.print_inventory {
         return print_inventory(&registry, args.adapter.as_deref()).map(|()| ExitCode::SUCCESS);

@@ -91,7 +91,9 @@ impl InstallScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "origin", rename_all = "snake_case")]
 pub enum PacmanOrigin {
-    Official { repo: String },
+    /// `repo` stays `None` until a source reports it: `pacman -Qi` does not, and
+    /// guessing a repository would be inventing a fact.
+    Official { repo: Option<String> },
     Foreign,
 }
 
@@ -107,7 +109,12 @@ impl ComponentSource {
     /// Human label combining manager and origin, e.g. `pacman / extra`.
     pub fn label(&self) -> String {
         match self {
-            Self::Pacman { origin: PacmanOrigin::Official { repo } } => format!("pacman / {repo}"),
+            Self::Pacman { origin: PacmanOrigin::Official { repo: Some(repo) } } => {
+                format!("pacman / {repo}")
+            }
+            Self::Pacman { origin: PacmanOrigin::Official { repo: None } } => {
+                "pacman / official".to_string()
+            }
             Self::Pacman { origin: PacmanOrigin::Foreign } => "pacman / foreign".to_string(),
             Self::Aur { helper } => format!("AUR / {helper}"),
             Self::Flatpak { scope } => format!("flatpak / {}", scope.label()),

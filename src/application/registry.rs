@@ -450,7 +450,7 @@ mod tests {
 
         let ambiguous = registry(vec![Fake::new("pacman"), Fake::new("flatpak")]);
         let official = Component {
-            source: ComponentSource::Pacman { origin: PacmanOrigin::Official { repo: "extra".into() } },
+            source: ComponentSource::Pacman { origin: PacmanOrigin::Official { repo: Some("extra".into()) } },
             ..sample("pacman", "btop")
         };
         let error = ambiguous.operation_provider(&official, OperationKind::Remove).err().expect("ambiguity");

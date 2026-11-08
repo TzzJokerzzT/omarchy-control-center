@@ -1,0 +1,4 @@
+btop 1.4.0-1
+gcc-libs 15.2.1+r5+g7d8d1b2d2e-1
+libfoo 1.0.0-2
+yay 13.0.1-1
