@@ -72,6 +72,25 @@ impl PendingOperation {
     }
 }
 
+/// What confirmation must lead to. Modelled as a value so the caller cannot
+/// accidentally treat "not confirmed" as "execute anyway".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmDecision {
+    Execute,
+    Blocked(Vec<String>),
+    PhraseMismatch { expected: String },
+}
+
+pub fn decide(pending: &PendingOperation, typed: &str) -> ConfirmDecision {
+    if pending.is_blocked() {
+        return ConfirmDecision::Blocked(pending.plan.blocking.clone());
+    }
+    if !pending.confirmation_satisfied(typed) {
+        return ConfirmDecision::PhraseMismatch { expected: pending.confirmation_phrase().to_string() };
+    }
+    ConfirmDecision::Execute
+}
+
 /// Builds the preview. Refuses to build one in read-only mode, so no destructive
 /// path can be reached from a session that asked not to have them.
 pub fn prepare(
@@ -241,6 +260,7 @@ mod tests {
     struct State {
         installed: AtomicBool,
         dependents: AtomicUsize,
+        blocked: AtomicBool,
         executed: AtomicUsize,
     }
 
@@ -315,6 +335,11 @@ mod tests {
             component: &Component,
         ) -> Result<OperationPlan, AdapterError> {
             let dependents = self.state.dependents.load(Ordering::SeqCst);
+            let blocking = if self.state.blocked.load(Ordering::SeqCst) {
+                vec!["required by other packages".to_string()]
+            } else {
+                Vec::new()
+            };
             Ok(OperationPlan {
                 adapter: "pacman".to_string(),
                 target: request.target.clone(),
@@ -331,7 +356,7 @@ mod tests {
                 affected: (0..dependents)
                     .map(|index| format!("dependent-{index}"))
                     .collect(),
-                blocking: Vec::new(),
+                blocking,
                 unknown: vec!["files owned by the package were not listed".to_string()],
                 notes: Vec::new(),
             })
@@ -473,6 +498,30 @@ mod tests {
             execute_verified(&registry, &pending, true).unwrap_err(),
             PrepareError::ReadOnly
         );
+    }
+
+    #[test]
+    fn an_unconfirmed_phrase_never_decides_to_execute() {
+        let (registry, _state) = setup();
+        let pending = prepare(&registry, &component("btop"), OperationKind::Remove, false).expect("plan");
+
+        assert_eq!(decide(&pending, "btop"), ConfirmDecision::Execute);
+        for wrong in ["", "y", "yes", "BT", "btop2", "btop now"] {
+            assert_eq!(
+                decide(&pending, wrong),
+                ConfirmDecision::PhraseMismatch { expected: "btop".to_string() },
+                "{wrong:?} must not confirm"
+            );
+        }
+    }
+
+    #[test]
+    fn a_blocked_plan_decides_blocked_even_with_the_right_phrase() {
+        let (registry, state) = setup();
+        state.blocked.store(true, Ordering::SeqCst);
+        let pending = prepare(&registry, &component("btop"), OperationKind::Remove, false).expect("plan");
+        assert!(pending.is_blocked());
+        assert!(matches!(decide(&pending, "btop"), ConfirmDecision::Blocked(_)));
     }
 
     #[test]

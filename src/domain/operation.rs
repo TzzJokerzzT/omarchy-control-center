@@ -149,13 +149,15 @@ impl OperationOutcome {
             exit_code,
             command_display: command_display.into(),
             stdout_tail: String::new(),
-            stderr_tail: tail(stderr, 2000),
+            stderr_tail: tail_text(stderr, 2000),
             summary: "operation failed".to_string(),
         }
     }
 }
 
-fn tail(text: &str, max: usize) -> String {
+/// Keeps the end of a command output, which is where the error is, without
+/// breaking a UTF-8 boundary.
+pub fn tail_text(text: &str, max: usize) -> String {
     if text.len() <= max {
         return text.to_string();
     }

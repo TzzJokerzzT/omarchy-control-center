@@ -35,13 +35,38 @@ pub struct Args {
     #[arg(long)]
     pub print_inventory: bool,
 
-    /// Restrict `--print-inventory` to a single adapter id.
-    #[arg(long, value_name = "ID", requires = "print_inventory")]
+    /// Restrict an export to a single adapter id.
+    #[arg(long, value_name = "ID")]
     pub adapter: Option<String>,
+
+    /// Print the plan that a destructive operation would run, as JSON, and exit.
+    /// Never executes anything: it is the same preview the interface shows.
+    #[arg(long, value_name = "NATIVE_ID")]
+    pub print_plan: Option<String>,
+
+    /// Operation to plan with `--print-plan`.
+    #[arg(long, value_name = "KIND", default_value = "remove", requires = "print_plan")]
+    pub kind: PlanKindArg,
 }
 
 impl Args {
     pub fn parse_args() -> Self {
         Self::parse()
+    }
+}
+
+/// Operations that `--print-plan` can describe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum PlanKindArg {
+    Remove,
+    Update,
+}
+
+impl From<PlanKindArg> for crate::domain::OperationKind {
+    fn from(value: PlanKindArg) -> Self {
+        match value {
+            PlanKindArg::Remove => Self::Remove,
+            PlanKindArg::Update => Self::Update,
+        }
     }
 }

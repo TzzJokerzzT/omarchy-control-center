@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use crate::infrastructure::process::{
@@ -17,6 +18,7 @@ use crate::infrastructure::process::{
 pub struct FakeRunner {
     responses: BTreeMap<String, Result<CommandOutput, ProcessError>>,
     programs: Vec<String>,
+    calls: Mutex<Vec<String>>,
 }
 
 impl FakeRunner {
@@ -68,8 +70,9 @@ impl FakeRunner {
         self
     }
 
-    pub fn executed(&self) -> Vec<&str> {
-        self.responses.keys().map(|key| key.as_str()).collect()
+    /// Every command that was actually attempted, in order.
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().map(|calls| calls.clone()).unwrap_or_default()
     }
 }
 
@@ -82,6 +85,9 @@ impl CommandRunner for FakeRunner {
     }
 
     fn run(&self, spec: &CommandSpec) -> Result<CommandOutput, ProcessError> {
+        if let Ok(mut calls) = self.calls.lock() {
+            calls.push(spec.display());
+        }
         match self.responses.get(&spec.display()) {
             Some(result) => result.clone(),
             None => Err(ProcessError::NotFound { program: format!("{} (not registered)", spec.display()) }),

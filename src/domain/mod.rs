@@ -13,5 +13,5 @@ pub use component::{
 };
 pub use error::AdapterError;
 pub use operation::{
-    OperationKind, OperationOutcome, OperationPlan, OperationRequest, PlannedCommand,
+    OperationKind, OperationOutcome, OperationPlan, OperationRequest, PlannedCommand, tail_text,
 };

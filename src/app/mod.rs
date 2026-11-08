@@ -19,6 +19,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::application::operations::{self, OperationRecord, PendingOperation};
+use crate::application::ConfirmDecision;
 use crate::application::{AdapterRegistry, InventorySnapshot, search};
 use crate::domain::{Component, OperationKind, SourceGroup};
 use crate::infrastructure::system::SystemInfo;
@@ -280,10 +281,16 @@ impl UiState {
     fn confirm_operation(&mut self, actions: &mut Actions<'_>) {
         let Some(pending) = self.pending.clone() else { return };
 
-        if !pending.confirmation_satisfied(&self.plan_input) {
-            self.status_line =
-                format!("type exactly '{}' to confirm, or Esc to cancel", pending.confirmation_phrase());
-            return;
+        match crate::application::decide(&pending, &self.plan_input) {
+            ConfirmDecision::Execute => {}
+            ConfirmDecision::Blocked(reasons) => {
+                self.status_line = format!("blocked: {}", reasons.join("; "));
+                return;
+            }
+            ConfirmDecision::PhraseMismatch { expected } => {
+                self.status_line = format!("type exactly '{expected}' to confirm, or Esc to cancel");
+                return;
+            }
         }
 
         let handover = pending.plan.requires_tty();

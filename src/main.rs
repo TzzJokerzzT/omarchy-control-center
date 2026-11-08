@@ -20,7 +20,7 @@ use crate::cli::Args;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::paths::AppPaths;
 use crate::infrastructure::system::{SystemInfo, guard_not_root};
-use crate::application::AdapterRegistry;
+use crate::application::{AdapterRegistry, operations};
 use crate::infrastructure::process::SystemRunner;
 
 fn main() -> ExitCode {
@@ -89,6 +89,16 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
     if args.print_inventory {
         return print_inventory(&registry, args.adapter.as_deref()).map(|()| ExitCode::SUCCESS);
     }
+    if let Some(target) = &args.print_plan {
+        return print_plan(
+            &registry,
+            target,
+            args.adapter.as_deref(),
+            args.kind.into(),
+            read_only,
+        )
+        .map(|()| ExitCode::SUCCESS);
+    }
 
     app::run(app::Bootstrap {
         registry: Arc::new(registry),
@@ -99,6 +109,48 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
     .context("interface failure")?;
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Prints exactly the plan a destructive operation would run, and exits without
+/// executing anything. The interface shows this same value.
+fn print_plan(
+    registry: &AdapterRegistry,
+    target: &str,
+    only_adapter: Option<&str>,
+    kind: crate::domain::OperationKind,
+    read_only: bool,
+) -> anyhow::Result<()> {
+    #[derive(serde::Serialize)]
+    struct PlanExport<'a> {
+        fingerprint: &'a str,
+        executable: bool,
+        plan: &'a crate::domain::OperationPlan,
+    }
+
+    let snapshot = registry.load_all();
+    let component = snapshot
+        .components
+        .iter()
+        .find(|component| component.id.native_id == target)
+        .filter(|component| only_adapter.is_none_or(|wanted| component.id.adapter == wanted))
+        .ok_or_else(|| anyhow::anyhow!("{target} is not installed according to any adapter"))?;
+
+    match operations::prepare(registry, component, kind, read_only) {
+        Ok(pending) => {
+            let export = PlanExport {
+                fingerprint: pending.fingerprint(),
+                executable: pending.plan.is_executable(),
+                plan: &pending.plan,
+            };
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            serde_json::to_writer_pretty(&mut handle, &export)
+                .context("cannot serialize the plan")?;
+            handle.write_all(b"\n")?;
+            Ok(())
+        }
+        Err(error) => Err(anyhow::anyhow!("{error}")),
+    }
 }
 
 /// Headless inventory export. Never touches the terminal and never mutates

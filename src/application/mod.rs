@@ -7,7 +7,7 @@ pub mod operations;
 mod registry;
 pub mod search;
 
-pub use operations::{OperationRecord, PendingOperation, PrepareError};
+pub use operations::{ConfirmDecision, OperationRecord, PendingOperation, PrepareError, decide};
 pub use registry::{
     AdapterFailure, AdapterRegistry, DuplicateIdentity, InventorySnapshot, ProviderError,
     RegistryError,
