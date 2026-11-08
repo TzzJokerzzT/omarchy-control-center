@@ -315,6 +315,8 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &UiState) {
 
 fn state_cell(component: &Component) -> Span<'static> {
     match component.status {
+        crate::domain::ComponentStatus::Enabled => semantic(Color::Green, "enabled"),
+        crate::domain::ComponentStatus::Disabled => muted("disabled"),
         crate::domain::ComponentStatus::Orphan => semantic(Color::Yellow, "orphan"),
         crate::domain::ComponentStatus::Installed => muted("installed"),
         crate::domain::ComponentStatus::Unknown => muted("unknown"),

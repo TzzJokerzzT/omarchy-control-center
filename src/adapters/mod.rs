@@ -10,18 +10,21 @@ use crate::infrastructure::process::CommandRunner;
 
 pub mod aur;
 pub mod flatpak;
+pub mod omarchy;
 pub mod pacman;
 
 /// Builds the registry for this run. New integrations are added here and nowhere
 /// else, so the UI and the application layer never change when one is added.
 ///
 /// `pacman` comes first because it owns every pacman-managed component;
-/// `aur` contributes metadata and routing for the foreign ones it owns rather
-/// than listing them again (decision D1); `flatpak` is optional by design
-/// (decision D6) and reports itself unavailable when its tool is missing.
+/// `omarchy` owns the shell plugin catalogue; `aur` contributes metadata and
+/// routing for the foreign packages it owns rather than listing them again
+/// (decision D1); `flatpak` is optional by design (decision D6) and reports
+/// itself unavailable when its tool is missing.
 pub fn build_registry(runner: Arc<dyn CommandRunner>) -> Result<AdapterRegistry, RegistryError> {
     AdapterRegistry::new(vec![
         Box::new(pacman::PacmanAdapter::new(Arc::clone(&runner))),
+        Box::new(omarchy::OmarchyPluginAdapter::new(Arc::clone(&runner))),
         Box::new(aur::AurAdapter::new(Arc::clone(&runner))),
         Box::new(flatpak::FlatpakAdapter::new(Arc::clone(&runner))),
     ])
@@ -33,9 +36,9 @@ mod tests {
     use crate::infrastructure::test_support::FakeRunner;
 
     #[test]
-    fn registers_pacman_aur_and_flatpak() {
+    fn registers_every_available_integration() {
         let registry = build_registry(Arc::new(FakeRunner::new())).expect("registry");
-        for expected in ["pacman", "aur", "flatpak"] {
+        for expected in ["pacman", "omarchy", "aur", "flatpak"] {
             assert!(
                 registry.get(expected).is_some(),
                 "{expected} must be registered"
@@ -56,6 +59,6 @@ mod tests {
             snapshot.failures
         );
         assert!(snapshot.statuses.iter().all(|status| !status.available()));
-        assert_eq!(snapshot.statuses.len(), 3);
+        assert_eq!(snapshot.statuses.len(), 4);
     }
 }

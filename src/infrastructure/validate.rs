@@ -19,6 +19,21 @@ pub fn validate_pacman_name(value: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Omarchy plugin ids: `omarchy.clock`, `io.github.user.plugin`, `omatings`.
+pub fn validate_plugin_id(value: &str) -> Result<(), &'static str> {
+    validate_common(value)?;
+    if value.starts_with('-') {
+        return Err("must not start with '-' (that would be read as an option)");
+    }
+    if let Some(bad) = value
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
+    {
+        return Err(reason_for(bad));
+    }
+    Ok(())
+}
+
 /// flatpak references: `app/org.example.App/x86_64/stable` and plain app ids.
 pub fn validate_flatpak_ref(value: &str) -> Result<(), &'static str> {
     validate_common(value)?;
@@ -122,6 +137,32 @@ mod tests {
             assert!(
                 rejected(validate_pacman_name, value),
                 "{value:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_omarchy_plugin_ids_and_rejects_options() {
+        for id in [
+            "omarchy.clock",
+            "io.github.fatihaydost.houra",
+            "omatings",
+            "denon.touchpad",
+        ] {
+            assert!(validate_plugin_id(id).is_ok(), "{id} should be accepted");
+        }
+        for hostile in [
+            "--yes",
+            "-r",
+            "plugin id",
+            "plugin;rm -rf /",
+            "a/b",
+            "$(id)",
+            "",
+        ] {
+            assert!(
+                validate_plugin_id(hostile).is_err(),
+                "{hostile:?} must be rejected"
             );
         }
     }

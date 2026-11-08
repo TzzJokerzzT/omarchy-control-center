@@ -61,6 +61,7 @@ pub enum ComponentCategory {
     Package,
     Application,
     Runtime,
+    Plugin,
 }
 
 impl ComponentCategory {
@@ -69,6 +70,7 @@ impl ComponentCategory {
             Self::Package => "Package",
             Self::Application => "Application",
             Self::Runtime => "Runtime",
+            Self::Plugin => "Plugin",
         }
     }
 }
@@ -105,9 +107,20 @@ pub enum PacmanOrigin {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComponentSource {
-    Pacman { origin: PacmanOrigin },
-    Aur { helper: String },
-    Flatpak { scope: InstallScope },
+    Pacman {
+        origin: PacmanOrigin,
+    },
+    Aur {
+        helper: String,
+    },
+    Flatpak {
+        scope: InstallScope,
+    },
+    /// An Omarchy shell plugin. First-party plugins ship inside the `omarchy`
+    /// package; third-party ones live in the user's plugin directory.
+    OmarchyPlugin {
+        first_party: bool,
+    },
 }
 
 impl ComponentSource {
@@ -127,6 +140,8 @@ impl ComponentSource {
             } => "pacman / foreign".to_string(),
             Self::Aur { helper } => format!("AUR / {helper}"),
             Self::Flatpak { scope } => format!("flatpak / {}", scope.label()),
+            Self::OmarchyPlugin { first_party: true } => "omarchy / first-party".to_string(),
+            Self::OmarchyPlugin { first_party: false } => "omarchy / third-party".to_string(),
         }
     }
 
@@ -141,6 +156,7 @@ impl ComponentSource {
             } => SourceGroup::Foreign,
             Self::Aur { .. } => SourceGroup::Foreign,
             Self::Flatpak { .. } => SourceGroup::Flatpak,
+            Self::OmarchyPlugin { .. } => SourceGroup::OmarchyPlugins,
         }
     }
 }
@@ -152,6 +168,7 @@ pub enum SourceGroup {
     Pacman,
     Foreign,
     Flatpak,
+    OmarchyPlugins,
 }
 
 impl SourceGroup {
@@ -160,6 +177,7 @@ impl SourceGroup {
             Self::Pacman => "Pacman",
             Self::Foreign => "AUR / foreign",
             Self::Flatpak => "Flatpak",
+            Self::OmarchyPlugins => "Omarchy plugins",
         }
     }
 }
@@ -168,6 +186,8 @@ impl SourceGroup {
 #[serde(rename_all = "snake_case")]
 pub enum ComponentStatus {
     Installed,
+    Enabled,
+    Disabled,
     Orphan,
     Unknown,
 }
@@ -208,6 +228,15 @@ impl DetectionMethod {
         Self {
             program: program.into(),
             args,
+            note: None,
+        }
+    }
+
+    /// A fact established by reading a directory rather than by asking a tool.
+    pub fn scan(path: impl AsRef<std::path::Path>) -> Self {
+        Self {
+            program: "readdir".to_string(),
+            args: vec![path.as_ref().display().to_string()],
             note: None,
         }
     }
