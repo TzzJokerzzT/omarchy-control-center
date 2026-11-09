@@ -349,10 +349,17 @@ mod tests {
     use super::*;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct TestBin {
         dir: PathBuf,
     }
+
+    /// Guards against two tests picking the same fixture name: the directory gets a unique
+    /// suffix per instance, so one test's cleanup can never delete another test's fixture
+    /// mid-write. That is exactly what CI caught: two tests both asked for "present", and
+    /// whichever finished first removed the directory the other was writing into.
+    static NEXT_SANDBOX: AtomicUsize = AtomicUsize::new(0);
 
     impl TestBin {
         fn new(name: &str, script: &str) -> Self {
@@ -360,8 +367,9 @@ mod tests {
             let _guard = FIXTURE_LOCK
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            let dir =
-                std::env::temp_dir().join(format!("occ-proc-{}-{}", std::process::id(), name));
+            let unique = NEXT_SANDBOX.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir()
+                .join(format!("occ-proc-{}-{name}-{unique}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).expect("create fixture dir");
             let file = dir.join(name);
@@ -442,7 +450,7 @@ mod tests {
 
     #[test]
     fn a_missing_program_is_reported_as_not_found() {
-        let bin = TestBin::new("present", "#!/bin/sh\nexit 0\n");
+        let bin = TestBin::new("present-for-missing", "#!/bin/sh\nexit 0\n");
         let error = bin
             .runner()
             .run(&CommandSpec::capture("absent-tool", vec![]))
@@ -457,7 +465,7 @@ mod tests {
 
     #[test]
     fn a_program_path_is_rejected_instead_of_executed() {
-        let bin = TestBin::new("present", "#!/bin/sh\nexit 0\n");
+        let bin = TestBin::new("present-for-path", "#!/bin/sh\nexit 0\n");
         let spec = CommandSpec::capture("./present", vec![]);
         let error = bin.runner().run(&spec).unwrap_err();
         assert!(matches!(error, ProcessError::InvalidProgram { .. }));
