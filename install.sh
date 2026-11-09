@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Omarchy Control Center — installer.
 #
-# Installs the binary into the user's own bin directory, optionally adds the Omarchy
-# bar widget, and can undo all of it. It never uses sudo, never touches anything
-# outside the paths it prints, and never deletes state silently: the operation history
-# and the quarantine area survive an uninstall unless you ask for them to go.
+# Installs the binary into the user's own bin directory under two names
+# (`omarchy-control-center` and the short `control-center`), makes sure that directory
+# is on PATH, optionally adds the Omarchy bar widget, and can undo all of it.
+#
+# It never uses sudo, never touches anything outside the paths it prints, and never
+# deletes state silently: the operation history and the quarantine area survive an
+# uninstall unless you ask for them to go.
 #
 # Every step is echoed before it happens. Pass --dry-run to see the whole plan without
 # changing anything.
@@ -12,13 +15,17 @@ set -euo pipefail
 
 REPO_URL="https://github.com/TzzJokerzzT/omarchy-control-center"
 BIN_NAME="omarchy-control-center"
+SHORT_NAME="control-center"
 PLUGIN_ID="tzzjokerzzt.omarchy-control-center"
+MARK_BEGIN="# >>> omarchy-control-center >>>"
+MARK_END="# <<< omarchy-control-center <<<"
 
 PREFIX="${XDG_BIN_HOME:-$HOME/.local/bin}"
 PLUGIN=ask
 DRY_RUN=0
 UNINSTALL=0
 PURGE_STATE=0
+ADD_TO_PATH=ask
 ASSUME_YES=0
 
 usage() {
@@ -30,17 +37,22 @@ Usage:
 
 Options:
   --prefix DIR      Where to put the binary (default: $XDG_BIN_HOME or ~/.local/bin)
+  --path            Add the prefix to your shell configuration without asking
+  --no-path         Never touch your shell configuration
   --plugin          Also install the Omarchy bar widget
   --no-plugin       Skip the bar widget even if Omarchy is present
   --dry-run         Print every step and change nothing
-  --uninstall       Remove the binary and the bar widget
+  --uninstall       Remove the binary, the short name and the bar widget
   --purge-state     With --uninstall: also delete config, history and quarantine
   --yes             Do not ask for confirmation (for scripted use)
   -h, --help        This text
 
 What it writes:
-  <prefix>/omarchy-control-center                                   the program
-  ~/.config/omarchy/plugins/tzzjokerzzt.omarchy-control-center/     the bar widget (optional)
+  <prefix>/omarchy-control-center   the program
+  <prefix>/control-center           a link to it, so the short name works from anywhere
+  your shell rc file                one marked block that puts <prefix> on PATH,
+                                    only when it is not there already
+  ~/.config/omarchy/plugins/tzzjokerzzt.omarchy-control-center/   the bar widget (optional)
 
 What it leaves alone unless you ask:
   ~/.config/omarchy-control-center/          your configuration
@@ -82,6 +94,8 @@ parse_args() {
         PREFIX="$2"
         shift 2
         ;;
+      --path) ADD_TO_PATH=yes; shift ;;
+      --no-path) ADD_TO_PATH=no; shift ;;
       --plugin) PLUGIN=yes; shift ;;
       --no-plugin) PLUGIN=no; shift ;;
       --dry-run) DRY_RUN=1; shift ;;
@@ -99,6 +113,7 @@ state_dir() { printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-control
 config_dir() { printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-control-center"; }
 plugins_dir() { printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"; }
 plugin_dir() { printf '%s/%s' "$(plugins_dir)" "$PLUGIN_ID"; }
+short_link() { printf '%s/%s' "$PREFIX" "$SHORT_NAME"; }
 
 is_arch_like() {
   [ -r /etc/os-release ] || return 1
@@ -117,6 +132,140 @@ need_cargo() {
   say "On Arch and Omarchy:"
   say "    sudo pacman -S --needed rust"
   return 1
+}
+
+on_path() {
+  case ":$PATH:" in
+    *":$1:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The shell configuration file that should gain the PATH block.
+rc_file() {
+  local shell_name
+  shell_name="$(basename "${SHELL:-bash}")"
+  case "$shell_name" in
+    zsh) printf '%s' "${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash) printf '%s' "$HOME/.bashrc" ;;
+    fish) printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish" ;;
+    *) printf '%s' "$HOME/.profile" ;;
+  esac
+}
+
+rc_has_block() {
+  local rc="$1"
+  [ -f "$rc" ] && grep -Fqx "$MARK_BEGIN" "$rc"
+}
+
+# Writes the marked block. Idempotent: an existing block is replaced, never duplicated,
+# and the block itself avoids adding a duplicate PATH entry when sourced twice.
+write_path_block() {
+  local rc="$1"
+  local block
+  if [ "$(basename "${SHELL:-bash}")" = fish ]; then
+    block="$MARK_BEGIN
+# Added by install.sh so 'control-center' works from any directory.
+fish_add_path \"$PREFIX\"
+$MARK_END"
+  else
+    block="$MARK_BEGIN
+# Added by install.sh so 'control-center' works from any directory.
+case \":\$PATH:\" in
+  *\":$PREFIX:\"*) ;;
+  *) export PATH=\"$PREFIX:\$PATH\" ;;
+esac
+$MARK_END"
+  fi
+
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '    [dry-run] append the PATH block to %s\n' "$rc"
+    printf '%s\n' "$block" | sed 's/^/             /'
+    return 0
+  fi
+
+  local directory
+  directory="$(dirname "$rc")"
+  mkdir -p "$directory"
+  remove_path_block "$rc" quiet
+
+  # A file that does not end with a newline would swallow the first marker line.
+  if [ -s "$rc" ] && [ -n "$(tail -c 1 "$rc" 2>/dev/null)" ]; then
+    printf '\n' >> "$rc"
+  fi
+  printf '%s\n' "$block" >> "$rc"
+  printf '    added the PATH block to %s\n' "$rc"
+}
+
+# Removes exactly the block this script wrote, leaving the rest of the file untouched.
+remove_path_block() {
+  local rc="$1"
+  local quiet="${2:-}"
+  [ -f "$rc" ] || return 0
+  rc_has_block "$rc" || return 0
+
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '    [dry-run] remove the PATH block from %s\n' "$rc"
+    return 0
+  fi
+
+  local temporary
+  temporary="$(mktemp "$rc.occ.XXXXXX")"
+  awk -v begin="$MARK_BEGIN" -v end="$MARK_END" '
+    $0 == begin { skipping = 1 }
+    !skipping { print }
+    $0 == end { skipping = 0 }
+  ' "$rc" >"$temporary"
+
+  # Never leave the user with a truncated file: the rewrite must not contain markers.
+  if grep -Fqx "$MARK_BEGIN" "$temporary"; then
+    rm -f "$temporary"
+    warn "refusing to rewrite $rc: the PATH block could not be isolated"
+    return 1
+  fi
+  mv "$temporary" "$rc"
+  [ -n "$quiet" ] || printf '    removed the PATH block from %s\n' "$rc"
+}
+
+install_short_name() {
+  step "Installing the short name '$SHORT_NAME'"
+  # A link, not a shell alias: a link works for scripts, launchers and the bar widget,
+  # and it needs no shell configuration to be re-read.
+  run ln -sfn "$BIN_NAME" "$(short_link)"
+  if [ "$DRY_RUN" = 1 ]; then
+    say "    [dry-run] $(short_link) --version"
+  else
+    "$(short_link)" --version >/dev/null || die "the '$SHORT_NAME' link does not run"
+    say "    $SHORT_NAME -> $PREFIX/$BIN_NAME"
+  fi
+}
+
+ensure_path() {
+  step "Making '$SHORT_NAME' reachable from any directory"
+  if on_path "$PREFIX"; then
+    say "    $PREFIX is already on PATH"
+    return 0
+  fi
+
+  local rc
+  rc="$(rc_file)"
+  say "    $PREFIX is not on PATH yet."
+
+  if [ "$ADD_TO_PATH" = no ]; then
+    warn "leaving your shell configuration alone (--no-path)"
+    say "    add this yourself, then open a new terminal:"
+    say "      export PATH=\"$PREFIX:\$PATH\""
+    return 0
+  fi
+
+  if [ "$ADD_TO_PATH" = ask ] && ! confirm "Add $PREFIX to PATH in $rc?"; then
+    say "    kept your shell configuration as it is"
+    say "    to use the short name anyway, run: $PREFIX/$BIN_NAME"
+    return 0
+  fi
+
+  write_path_block "$rc"
+  say "    open a new terminal, or run: source $rc"
 }
 
 do_install() {
@@ -146,19 +295,19 @@ do_install() {
     say "    $("$PREFIX/$BIN_NAME" --version)"
   fi
 
+  install_short_name
+  ensure_path
   install_plugin
 
   step "Done"
-  case ":$PATH:" in
-    *":$PREFIX:"*) say "    Run it:      $BIN_NAME" ;;
-    *)
-      warn "$PREFIX is not on your PATH"
-      say "    Add it to your shell configuration, or run the full path:"
-      say "      $PREFIX/$BIN_NAME"
-      ;;
-  esac
-  say "    Read-only:   $BIN_NAME --read-only"
-  say "    Inventory:   $BIN_NAME --print-inventory"
+  if on_path "$PREFIX" || [ "$ADD_TO_PATH" = yes ]; then
+    say "    Run it:      $SHORT_NAME"
+  else
+    say "    Run it:      $SHORT_NAME   (once $PREFIX is on your PATH)"
+    say "                 $PREFIX/$BIN_NAME  works right now"
+  fi
+  say "    Read-only:   $SHORT_NAME --read-only"
+  say "    Inventory:   $SHORT_NAME --print-inventory"
   say "    Uninstall:   ./install.sh --uninstall"
   say ""
   say "    The first run writes a log to $(state_dir)/occ.log"
@@ -207,6 +356,23 @@ install_plugin() {
 
 do_uninstall() {
   local binary="$PREFIX/$BIN_NAME"
+
+  step "Removing the short name"
+  if [ -L "$(short_link)" ] || [ -e "$(short_link)" ]; then
+    run rm -f "$(short_link)"
+    say "    removed $(short_link)"
+  else
+    say "    $(short_link) is not there"
+  fi
+
+  step "Removing the PATH block"
+  local rc
+  rc="$(rc_file)"
+  if rc_has_block "$rc"; then
+    remove_path_block "$rc"
+  else
+    say "    $rc has no block from this installer"
+  fi
 
   step "Removing the program"
   if [ -f "$binary" ]; then

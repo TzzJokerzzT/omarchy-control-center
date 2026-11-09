@@ -62,14 +62,28 @@ cd omarchy-control-center
 ```
 
 It builds the release binary, installs it into `$XDG_BIN_HOME` (or `~/.local/bin`),
-verifies the installed binary runs, and offers to add the Omarchy bar widget. Every step
-is printed before it happens; `--dry-run` prints the whole plan and changes nothing.
+verifies the installed binary runs, installs the short name **`control-center`**, makes
+sure that directory is on your `PATH`, and offers to add the Omarchy bar widget. Every
+step is printed before it happens; `--dry-run` prints the whole plan and changes nothing.
+
+After that, from any directory and in any terminal:
+
+```sh
+control-center                 # the inventory
+control-center --read-only     # explore without any destructive action
+```
+
+`control-center` is a **link** to the same binary, not a shell alias. An alias would only
+exist in an interactive shell that sourced your rc file; a link works from scripts, from
+the bar widget, and from `omarchy-launch-tui control-center` too.
 
 ```sh
 ./install.sh --dry-run        # show every step, touch nothing
 ./install.sh --no-plugin      # binary only
 ./install.sh --plugin         # binary plus the Omarchy bar widget, no question asked
 ./install.sh --prefix DIR     # install somewhere else
+./install.sh --path           # add the prefix to PATH without asking
+./install.sh --no-path        # never touch the shell configuration
 ./install.sh --help           # all options
 ```
 
@@ -80,7 +94,15 @@ themselves unavailable elsewhere.
 | What the installer writes | Where |
 | --- | --- |
 | the program | `<prefix>/omarchy-control-center` |
+| the short name | `<prefix>/control-center` (a link to the program) |
+| one marked block, only when the prefix is not already on `PATH` | your shell rc file, chosen from `$SHELL` |
 | the bar widget (optional) | `~/.config/omarchy/plugins/tzzjokerzzt.omarchy-control-center/` |
+
+The PATH block is written between `# >>> omarchy-control-center >>>` and
+`# <<< omarchy-control-center <<<`, so it is added once no matter how often you install,
+and removed exactly — the rest of the file is left byte-for-byte as it was. It also
+avoids adding a duplicate entry when the file is sourced twice. If you prefer to manage
+`PATH` yourself, `--no-path` keeps the installer out of your shell configuration.
 
 The widget is copied only after Omarchy's own validator accepts it, and it is enabled
 with `omarchy plugin enable` so the shell state stays consistent.
@@ -92,6 +114,7 @@ If you would rather not run a script:
 ```sh
 cargo build --release --locked
 install -Dm755 target/release/omarchy-control-center ~/.local/bin/omarchy-control-center
+ln -sfn omarchy-control-center ~/.local/bin/control-center    # the short name
 
 # optional bar widget
 omarchy plugin validate omarchy-plugin
@@ -102,9 +125,12 @@ omarchy plugin enable tzzjokerzzt.omarchy-control-center
 ## Uninstall
 
 ```sh
-./install.sh --uninstall              # remove the program and the widget
+./install.sh --uninstall                # the program, the short name, the PATH block, the widget
 ./install.sh --uninstall --purge-state  # …and your configuration, history and quarantine
 ```
+
+The uninstall removes the `control-center` link and the PATH block it added, restoring
+your shell rc file to exactly what it was before the install.
 
 By default an uninstall **keeps your data**, and says where it is:
 
