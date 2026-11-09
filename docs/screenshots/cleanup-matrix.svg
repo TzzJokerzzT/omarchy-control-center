@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="888" height="534" viewBox="0 0 888 534">
+  <rect width="100%" height="100%" fill="#000000"/>
+  <text x="12" y="25" fill="#2f6b2f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">┌</text>
+  <text x="20" y="25" fill="#00ff41" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve"> OMARCHY CONTROL CENTER</text>
+  <text x="212" y="25" fill="#2f6b2f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">──────────────────────────────────────────────────────────────────────────────────┐</text>
+  <text x="12" y="42" fill="#2f6b2f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="20" y="42" fill="#00ff41" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">20 components</text>
+  <text x="124" y="42" fill="#2f6b2f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">   ·</text>
+  <text x="180" y="42" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">adapters 10/11</text>
+  <text x="292" y="42" fill="#2f6b2f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">   ·   Omarchy 4.5.0   ·   [/] search</text>
+  <text x="868" y="42" fill="#2f6b2f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="59" fill="#2f6b2f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘</text>
+  <text x="12" y="76" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">┌ CLEANUP — 0 leftover(s) 0 B · selected 0 B ──────────────────────────────────────────────────────────────┐</text>
+  <text x="12" y="93" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="20" y="93" fill="#b8ffb8" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">Nothing to clean up.</text>
+  <text x="868" y="93" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="110" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="110" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="127" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="20" y="127" fill="#b8ffb8" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">This screen lists only leftovers that no manager owns: plugin removal backups and Hyprland backup copies.</text>
+  <text x="868" y="127" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="144" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="20" y="144" fill="#b8ffb8" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">System packages are never listed here — those are removed through the package manager, one at a time.</text>
+  <text x="868" y="144" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="161" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="161" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="178" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="178" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="195" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="195" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="212" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="212" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="229" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="229" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="246" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="246" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="263" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="263" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="280" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="280" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="297" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="297" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="314" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="314" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="331" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="331" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="348" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="348" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="365" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="365" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="382" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="382" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="399" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="399" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="416" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="416" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="433" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="433" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="450" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="450" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="467" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="868" y="467" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
+  <text x="12" y="484" fill="#c8ff4f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘</text>
+  <text x="12" y="518" fill="#2f6b2f" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve"> [space] select  [A] all  [N] none  [Enter] move to quarantine  [Esc] back</text>
+</svg>

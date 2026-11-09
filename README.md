@@ -11,6 +11,18 @@ The interface never runs as root and never reads a password. It is also not a sk
 over `pacman`: adapters own their ecosystem, an unavailable tool is reported as an
 unavailable integration instead of an error, and no value is ever invented.
 
+![The inventory, with the Cyberpunk theme](docs/screenshots/inventory-cyberpunk.svg)
+
+<p align="center">
+  <img src="docs/screenshots/themes-monokai.svg" width="49%" alt="The theme selector, with the Monokai theme">
+  <img src="docs/screenshots/cleanup-matrix.svg" width="49%" alt="The cleanup screen, with the Matrix theme">
+</p>
+
+Those images are not screenshots pasted from a terminal: they are produced by the real
+renderer. A fixture inventory is drawn into a `ratatui` test buffer and written as SVG, so
+they cannot drift from the code. Regenerate with
+`cargo test --bin omarchy-control-center -- --ignored`.
+
 ## Requirements
 
 | Tool | Needed for | Notes |
@@ -188,6 +200,7 @@ omarchy-control-center --print-plan some-aur-package
 | `H` | operation history |
 | `C` | cleanup: leftovers that can be moved into quarantine |
 | `V` | quarantine: restore what was moved, or purge it for good |
+| `t` | themes: preview a palette and apply it |
 | `a` | adapter status and per-adapter issues |
 | `?` | help, including what every state means |
 | `q`, `Q`, `Esc` | quit; never interrupted while a command is running |
@@ -254,6 +267,46 @@ it cannot install from a subfolder of this project. Copying the folder is the ho
 instruction until the widget lives in its own repository — see
 [`docs/roadmap.md`](docs/roadmap.md).
 
+## Themes
+
+Six palettes ship with the program, plus a `default` that keeps your terminal's own colours:
+
+| Id | Theme |
+| --- | --- |
+| `zelda` | The Legend of Zelda — parchment, forest green, Triforce gold |
+| `cyberpunk` | Night City signage — hot yellow on deep purple |
+| `rei` | Rei Ayanami — Unit-00 pale blue, hospital white, cold red |
+| `monokai` | The editor palette everyone recognises |
+| `matrix` | Green phosphor on black |
+| `cviper` | C. Viper — charcoal suit, white shirt, an orange that hits |
+
+Press `t` to open the selector: `↑`/`↓` previews, `Enter` applies and remembers, `Esc` keeps
+the previous one. The selector also shows the id to write into your configuration.
+
+**Your own theme** is a small TOML file in
+`~/.config/omarchy-control-center/themes/`; the file name is the id:
+
+```toml
+# ~/.config/omarchy-control-center/themes/sunset.toml
+name = "Sunset"
+description = "Warm, low contrast"
+
+[colors]
+background = "#201010"
+foreground = "#ffeee0"
+selection  = "#3a1f1a"
+muted      = "#806058"
+accent     = "#ff8a5c"
+success    = "#8fd18f"
+warning    = "#ffc857"
+error      = "#ff5c5c"
+```
+
+`muted`, `accent`, `success`, `warning` and `error` are required; the rest are optional and
+fall back to your terminal. Unknown keys are rejected rather than ignored, a file that fails
+to load is reported in the selector with the exact field, and you cannot shadow a built-in
+id. Full rules: [`docs/themes.md`](docs/themes.md).
+
 ## Configuration
 
 Optional file at `~/.config/omarchy-control-center/config.toml` (see
@@ -277,6 +330,9 @@ or configuration content.
 * [`docs/architecture.md`](docs/architecture.md) — layers, adapter contract, operation lifecycle.
 * [`docs/adapters.md`](docs/adapters.md) — every adapter, every command it runs and why.
 * [`docs/security.md`](docs/security.md) — threat model, privilege handling, and the automated tests behind each guarantee.
+* [`docs/themes.md`](docs/themes.md) — the palette slots, the built-ins, and how to write your own theme.
+* [`docs/versioning.md`](docs/versioning.md) — the version scheme and how a release is cut.
+* [`CHANGELOG.md`](CHANGELOG.md) — what changed in each version.
 * [`docs/roadmap.md`](docs/roadmap.md) — every deferred item, with its blocker.
 * [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to report a problem and how a change gets merged.
 * [`docs/maintenance.md`](docs/maintenance.md) — what lives where, how the branch rules are
