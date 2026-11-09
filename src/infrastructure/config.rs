@@ -26,6 +26,8 @@ pub struct Config {
     pub read_only: bool,
     /// Extra directories prepended to the executable search path, in order.
     pub extra_search_paths: Vec<PathBuf>,
+    /// Theme id to start with. Overrides the one chosen in the theme selector.
+    pub theme: Option<String>,
 }
 
 impl Config {

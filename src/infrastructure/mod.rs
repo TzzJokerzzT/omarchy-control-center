@@ -4,6 +4,7 @@ pub mod config;
 pub mod history;
 pub mod logging;
 pub mod paths;
+pub mod preferences;
 pub mod process;
 pub mod reclaim;
 pub mod system;

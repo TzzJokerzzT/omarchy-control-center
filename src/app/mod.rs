@@ -39,6 +39,7 @@ pub enum Screen {
     Quarantine,
     Result,
     History,
+    Themes,
     Adapters,
     Help,
 }
@@ -89,6 +90,16 @@ pub struct UiState {
     pub system: SystemInfo,
     pub read_only: bool,
     pub notices: Vec<String>,
+    /// The active colour scheme. Starts from the configuration and changes when the theme
+    /// selector applies one.
+    pub theme: crate::ui::theme::Theme,
+    pub themes: crate::ui::theme::ThemeCatalogue,
+    pub theme_index: usize,
+    pub preferences_path: Option<std::path::PathBuf>,
+    /// Where a user drops their own theme files; rescanned when the selector opens.
+    pub theme_dir: Option<std::path::PathBuf>,
+    /// The theme that was active when the selector opened, so Esc can put it back.
+    pub theme_before: Option<crate::ui::theme::Theme>,
     pub snapshot: InventorySnapshot,
     pub screen: Screen,
     pub previous_screen: Screen,
@@ -144,6 +155,12 @@ impl UiState {
             system,
             read_only,
             notices,
+            theme: crate::ui::theme::default_theme(),
+            themes: crate::ui::theme::ThemeCatalogue::default(),
+            theme_index: 0,
+            preferences_path: None,
+            theme_dir: None,
+            theme_before: None,
             snapshot: InventorySnapshot::default(),
             screen: Screen::Inventory,
             previous_screen: Screen::Inventory,
@@ -529,6 +546,77 @@ impl UiState {
         }
     }
 
+    pub fn active_theme_index(&self) -> usize {
+        self.themes
+            .themes
+            .iter()
+            .position(|theme| theme.id == self.theme.id)
+            .unwrap_or(0)
+    }
+
+    /// Opens the selector, rescanning the user's directory so a theme dropped in while the
+    /// program runs appears without a restart.
+    fn open_themes(&mut self) {
+        if let Some(directory) = self.theme_dir.clone() {
+            let parent = directory.parent().map(|path| path.to_path_buf());
+            if let Some(parent) = parent {
+                self.themes = crate::ui::theme::catalogue(&parent);
+            }
+        }
+        self.theme_before = Some(self.theme.clone());
+        self.theme_index = self.active_theme_index();
+        self.open(Screen::Themes);
+    }
+
+    /// Moving through the list previews the theme: the list is the preview.
+    fn preview_theme(&mut self, delta: isize) {
+        if self.themes.themes.is_empty() {
+            return;
+        }
+        let count = self.themes.themes.len() as isize;
+        let next = (self.theme_index as isize + delta).rem_euclid(count);
+        self.theme_index = next as usize;
+        if let Some(theme) = self.themes.themes.get(self.theme_index) {
+            self.theme = theme.clone();
+        }
+    }
+
+    fn confirm_theme(&mut self) {
+        let Some(theme) = self.themes.themes.get(self.theme_index).cloned() else {
+            return;
+        };
+        self.theme = theme.clone();
+        self.theme_before = None;
+        self.screen = Screen::Inventory;
+
+        // The choice is remembered in the interface's own file, never by rewriting the
+        // user's config.toml (which carries their comments).
+        let Some(path) = self.preferences_path.clone() else {
+            self.status_line = format!(
+                "theme '{}' applied for this session; it could not be saved",
+                theme.name
+            );
+            return;
+        };
+        let preferences = crate::infrastructure::preferences::Preferences {
+            theme: Some(theme.id.clone()),
+        };
+        self.status_line = match preferences.save(&path) {
+            Ok(()) => format!("theme '{}' applied and remembered", theme.name),
+            Err(error) => format!(
+                "theme '{}' applied, but it could not be saved: {error}",
+                theme.name
+            ),
+        };
+    }
+
+    fn cancel_themes(&mut self) {
+        if let Some(previous) = self.theme_before.take() {
+            self.theme = previous;
+        }
+        self.back();
+    }
+
     fn refresh_history(&mut self) {
         match self.history.recent(50) {
             Ok(entries) => {
@@ -750,7 +838,9 @@ impl UiState {
                 }
             }
             KeyCode::Esc => {
-                if self.screen == Screen::Inventory {
+                if self.screen == Screen::Themes {
+                    self.cancel_themes();
+                } else if self.screen == Screen::Inventory {
                     self.quit = true;
                 } else {
                     self.back();
@@ -781,6 +871,7 @@ impl UiState {
                     self.open(Screen::Cleanup);
                 }
             }
+            KeyCode::Char('t') if self.screen != Screen::Themes => self.open_themes(),
             KeyCode::Char('V') => {
                 self.refresh_quarantine(actions.reclaimer);
                 self.open(Screen::Quarantine);
@@ -842,12 +933,14 @@ impl UiState {
                 Screen::Cleanup => {
                     self.status_line = "select a leftover with space first".to_string();
                 }
+                Screen::Themes => self.confirm_theme(),
                 Screen::Result | Screen::Details | Screen::History | Screen::Quarantine => {
                     self.back();
                 }
                 _ => {}
             },
             KeyCode::Up | KeyCode::Char('k') => match (self.screen, self.focus) {
+                (Screen::Themes, _) => self.preview_theme(-1),
                 (Screen::Cleanup, _) => {
                     self.cleanup_index = self.cleanup_index.saturating_sub(1);
                 }
@@ -862,6 +955,7 @@ impl UiState {
                 _ => {}
             },
             KeyCode::Down | KeyCode::Char('j') => match (self.screen, self.focus) {
+                (Screen::Themes, _) => self.preview_theme(1),
                 (Screen::Cleanup, _) => {
                     if self.cleanup_index + 1 < self.reclaimable().len() {
                         self.cleanup_index += 1;
@@ -904,6 +998,10 @@ enum Message {
 
 pub struct Bootstrap {
     pub registry: Arc<AdapterRegistry>,
+    pub theme: crate::ui::theme::Theme,
+    pub themes: crate::ui::theme::ThemeCatalogue,
+    pub theme_dir: std::path::PathBuf,
+    pub preferences_path: std::path::PathBuf,
     pub reclaimer: Arc<dyn crate::infrastructure::reclaim::Reclaimer>,
     pub history: History,
     pub system: SystemInfo,
@@ -926,6 +1024,11 @@ pub fn run(bootstrap: Bootstrap) -> anyhow::Result<()> {
         bootstrap.notices,
         bootstrap.history,
     );
+    state.theme = bootstrap.theme;
+    state.themes = bootstrap.themes;
+    state.theme_dir = Some(bootstrap.theme_dir);
+    state.preferences_path = Some(bootstrap.preferences_path);
+    state.theme_index = state.active_theme_index();
     let registry = Arc::clone(&bootstrap.registry);
     let reclaimer = Arc::clone(&bootstrap.reclaimer);
     let outcome = event_loop(

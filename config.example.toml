@@ -14,3 +14,8 @@ read_only = false
 # tool installed outside the default prefix.
 extra_search_paths = []
 # extra_search_paths = ["/usr/local/bin", "/home/you/.local/bin"]
+
+# Colour scheme. Must match a theme id: run the program, press 't' and the selector shows
+# each theme's id, or look in docs/themes.md. A theme pinned here wins over the one chosen
+# in the selector.
+# theme = "cyberpunk"

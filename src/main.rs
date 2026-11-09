@@ -93,6 +93,40 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
         }
         Arc::new(SystemRunner::with_extra_paths(search_paths))
     };
+    // Themes: built-ins plus whatever the user dropped in their theme directory.
+    let themes = ui::theme::catalogue(&paths.config_dir);
+    let preferences_path = paths.state_dir.join("preferences.toml");
+    let preferences = infrastructure::preferences::Preferences::load(&preferences_path);
+    let theme_dir = ui::theme::user_theme_dir(&paths.config_dir);
+
+    // The configuration wins over the choice made in the selector: if someone pinned a
+    // theme in config.toml, opening the selector must not silently override it.
+    let wanted = config.theme.clone().or_else(|| preferences.theme.clone());
+    let theme = match &wanted {
+        Some(id) => match themes.find(id) {
+            Some(theme) => theme.clone(),
+            None => {
+                let message = format!(
+                    "theme '{id}' was requested but no theme with that id exists; using the default"
+                );
+                tracing::warn!("{message}");
+                notices.push(message);
+                themes
+                    .find("default")
+                    .cloned()
+                    .unwrap_or_else(ui::theme::default_theme)
+            }
+        },
+        None => themes
+            .find("default")
+            .cloned()
+            .unwrap_or_else(ui::theme::default_theme),
+    };
+    for problem in &themes.problems {
+        tracing::warn!(%problem, "theme file rejected");
+        notices.push(format!("theme file rejected: {problem}"));
+    }
+
     let reclaimer: Arc<dyn infrastructure::reclaim::Reclaimer> =
         Arc::new(FileReclaimer::new(paths.state_dir.clone()));
     let registry = adapters::build_registry(Arc::clone(&runner), Arc::clone(&reclaimer))
@@ -115,6 +149,10 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
     app::run(app::Bootstrap {
         registry: Arc::new(registry),
         reclaimer,
+        theme,
+        themes,
+        theme_dir,
+        preferences_path,
         history: History::new(paths.history_file.clone()),
         system,
         read_only,
