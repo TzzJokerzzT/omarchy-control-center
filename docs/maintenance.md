@@ -51,16 +51,28 @@ re-running it can never silently drop a CI requirement.
 
 | Rule | Why |
 | --- | --- |
+| Pull requests open to collaborators only | a stranger cannot open a pull request, so a contribution arrives as an issue with a diff |
 | Pull request required | nobody pushes to `main` directly, so every change is reviewable |
-| One approval, from the code owner | only the maintainer approves; contributors fork and open a PR |
+| One approval, from the code owner | only the maintainer approves; a collaborator cannot approve their own pull request |
 | Dismiss stale approvals | a changed pull request is reviewed again |
 | Resolve conversations first | a review comment cannot be ignored by merging |
 | No force push, no deleting `main` | the history of a distributed program stays intact |
 | The `ci` check is required, with a strict branch | a pull request cannot be merged with a failing build or on top of an outdated `main` |
 | Owner **not** restricted | with `enforce_admins`, the owner could neither push nor merge their own PRs, because GitHub forbids approving your own |
 
-Inviting a collaborator with the **Write** role lets them merge an already-approved pull
-request. Keep contributions fork-based, or invite with **Read**.
+Pull requests can only be **opened by collaborators** (`pull_request_creation_policy:
+collaborators_only`), so an outside contributor cannot open one even with a fork: the flow is
+an issue with the patch attached, which `CONTRIBUTING.md` describes. Inviting someone with the
+**Write** role also lets them merge an already-approved pull request, so invite with **Read** if
+you only want them to review.
+
+That policy is **not** applied by `scripts/protect-main.sh`, which only writes
+`/branches/{branch}/protection`. A repository recreated from this source would come back with
+pull requests open to everyone; set it after running the script:
+
+```sh
+gh api --method PATCH "repos/$REPO" -f pull_request_creation_policy=collaborators_only
+```
 
 ## Routine checks
 

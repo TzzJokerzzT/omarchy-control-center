@@ -439,8 +439,9 @@ or configuration content.
 
 ## Contributing
 
-`main` is protected: changes arrive as pull requests from a fork, and a CODEOWNERS rule
-means only the maintainer can approve and merge them. Issues are open to everyone. See
+`main` is protected: it needs one approval, a CODEOWNERS review and a green `ci` run, and
+pull requests can only be opened by collaborators. If you have a fix and you are not one, open
+an issue with the patch attached. Issues are open to everyone. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the flow and the rules a change must respect.
 
 ## Development
