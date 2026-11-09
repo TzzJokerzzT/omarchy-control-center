@@ -12,19 +12,39 @@ Never paste a password, a token, or the contents of a configuration file.
 
 ## Sending a change
 
-`main` is protected: nobody pushes to it directly, including the maintainer's own work
-when it needs review. The flow is:
+Pull requests here can only be **opened by collaborators**: the repository uses GitHub's
+"Restrict pull requests to collaborators" policy, so a fork does not by itself get you a pull
+request. The path is an issue first:
 
-1. Fork the repository and work on a branch in your fork.
-2. Keep the change focused. One behaviour per pull request.
-3. Run the checks locally — they are the same ones the maintainer runs:
-   ```sh
-   cargo fmt --check
-   cargo clippy --all-targets -- -D warnings
-   cargo test
-   ```
-4. Open the pull request against `main`. A CODEOWNERS rule means it needs the
-   maintainer's review; only the maintainer can approve and merge.
+1. **Open an issue** describing the change, or the bug it fixes. One behaviour per issue.
+2. **Attach the patch if you already have it**: a `.patch` or `.diff` file, a branch in your
+   fork, or the diff in the issue body. Small enough to read is small enough to review.
+3. The maintainer either applies it, or invites you as a collaborator so you can open the
+   pull request yourself and keep working on it.
+
+If you are a collaborator, open the pull request against `main` and expect it to be
+**squashed** on merge: the pull request title becomes the commit subject, so write it like a
+commit (`feat(adapters): …`).
+
+Either way, `main` is protected. It needs one approval, a CODEOWNERS review from the
+maintainer, and a green `ci` run before it can merge; force pushes and branch deletion are
+blocked, so nothing lands by going around it.
+
+Run the checks locally first — they are the same ones `ci` runs:
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
+```
+
+Two pipeline rules that fail a workflow rather than a test:
+
+* **Every `uses:` must be a GitHub-owned action pinned to a full 40-character commit SHA.**
+  Third-party actions and floating tags are rejected by the repository's policy, so a change
+  that adds one has to pin it (or propose a different approach) before `ci` will run.
+* **The lockfile is checked with `--locked`.** A change that needs a different dependency has
+  to commit `Cargo.lock` with it, or CI fails on the lockfile step.
 
 ## What a change must respect
 
