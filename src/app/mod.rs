@@ -614,6 +614,48 @@ impl UiState {
         };
     }
 
+    /// Seeds a new theme file from the highlighted palette, so "create your own" starts from
+    /// something that already renders. The file is never overwritten and appears in the list
+    /// immediately, because the catalogue is rescanned.
+    fn create_theme(&mut self) {
+        let Some(base) = self.themes.themes.get(self.theme_index).cloned() else {
+            self.status_line = "no theme selected".to_string();
+            return;
+        };
+        let Some(directory) = self.theme_dir.clone() else {
+            self.status_line = "the theme directory is not known in this session".to_string();
+            return;
+        };
+
+        match crate::ui::theme::starter_file(&directory, &base) {
+            Ok(path) => {
+                if let Some(parent) = directory.parent() {
+                    self.themes = crate::ui::theme::catalogue(parent);
+                }
+                let id = path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.theme_index = self
+                    .themes
+                    .themes
+                    .iter()
+                    .position(|theme| theme.id == id)
+                    .unwrap_or(self.theme_index);
+                if let Some(theme) = self.themes.themes.get(self.theme_index) {
+                    self.theme = theme.clone();
+                }
+                self.status_line = format!(
+                    "created {} — edit it, save, and press t again",
+                    path.display()
+                );
+            }
+            Err(error) => {
+                self.status_line = format!("could not create a theme file: {error}");
+            }
+        }
+    }
+
     fn cancel_themes(&mut self) {
         if let Some(previous) = self.theme_before.take() {
             self.theme = previous;
@@ -902,6 +944,7 @@ impl UiState {
                 self.restore_quarantine(actions);
             }
             KeyCode::Char('p') if self.screen == Screen::Quarantine => self.prepare_purge(),
+            KeyCode::Char('c') if self.screen == Screen::Themes => self.create_theme(),
             KeyCode::Char('H') => {
                 if self.screen != Screen::History {
                     self.refresh_history();
