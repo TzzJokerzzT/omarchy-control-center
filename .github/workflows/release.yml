@@ -43,6 +43,16 @@ jobs:
             exit 1
           fi
 
+      # A tag does not trigger ci.yml, which only listens to pushes and pull requests on main.
+      # Without this gate a tag could publish code that never ran the checks a contributor is
+      # asked to run — and a published binary cannot be taken back from the people who
+      # installed it.
+      - name: Gate
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --all-targets
+
       - name: Build
         run: cargo build --release --locked
 
@@ -59,9 +69,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A tag carrying a suffix (`v0.4.0-rc1`) is a prerelease, and must be marked as one:
+          # /releases/latest answers with the newest release that is NOT a prerelease, so an
+          # unmarked candidate would be offered to everyone as a stable update.
+          prerelease=""
+          case "${GITHUB_REF_NAME}" in
+            *-*) prerelease="--prerelease" ;;
+          esac
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
             --notes "See CHANGELOG.md for what changed in this version." \
+            $prerelease \
             dist/omarchy-control-center-x86_64-linux \
             dist/SHA256SUMS

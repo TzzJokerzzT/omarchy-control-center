@@ -650,6 +650,62 @@ mod tests {
         let _ = std::fs::remove_dir_all(&sandbox);
     }
 
+    /// The other half of this feature lives in the workflow: it decides what is published,
+    /// and this module decides what is accepted. The two halves cannot be exercised together
+    /// from a unit test, so the contract is pinned against the workflow text itself.
+    const RELEASE_WORKFLOW: &str = include_str!("../../.github/workflows/release.yml");
+
+    fn squashed(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    fn the_release_workflow_publishes_the_assets_this_updater_accepts() {
+        for asset in [BINARY_ASSET, CHECKSUM_ASSET] {
+            assert!(
+                RELEASE_WORKFLOW.contains(asset),
+                "the release workflow does not publish {asset}, so every download it offers \
+                 would be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn the_release_workflow_runs_the_gate_before_publishing() {
+        // A tag does not trigger ci.yml, which only listens to pushes and pull requests on
+        // main. Without the gate here, a tag can publish code that never ran it.
+        for check in [
+            "cargo fmt --check",
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo test --all-targets",
+        ] {
+            assert!(
+                RELEASE_WORKFLOW.contains(check),
+                "the release workflow never runs `{check}`"
+            );
+        }
+    }
+
+    #[test]
+    fn a_prerelease_tag_is_published_as_a_prerelease() {
+        // The release API's /releases/latest answers with the newest release that is not a
+        // prerelease. Publishing `v0.4.0-rc1` as a normal release would offer it to everyone
+        // running 0.3.0 as though it were a stable update.
+        let workflow = squashed(RELEASE_WORKFLOW);
+        assert!(
+            workflow.contains(r#"case "${GITHUB_REF_NAME}" in *-*) prerelease="--prerelease" ;;"#),
+            "the workflow must decide from the tag whether it is a prerelease"
+        );
+        assert!(
+            workflow.contains(r#"gh release create "${GITHUB_REF_NAME}""#),
+            "the release is created from the tag"
+        );
+        assert!(
+            workflow.contains("$prerelease"),
+            "the publish step must pass the prerelease decision through"
+        );
+    }
+
     fn api_args(url: &str) -> String {
         format!("--fail --silent --show-error --location --max-time 10 --proto =https {url}")
     }
