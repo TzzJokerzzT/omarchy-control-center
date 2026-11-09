@@ -477,7 +477,9 @@ mod tests {
 
     #[test]
     fn a_hung_command_is_killed_at_its_deadline() {
-        let bin = TestBin::new("slow", "#!/bin/sh\nsleep 30\n");
+        // An absolute path: the fixture must not depend on the PATH of whoever runs the
+        // tests, or it silently becomes a fast script instead of a hanging one.
+        let bin = TestBin::new("slow", "#!/bin/sh\nexec /bin/sleep 30\n");
         let spec = CommandSpec::capture("slow", vec![]).with_timeout(Duration::from_millis(150));
         let started = Instant::now();
         let error = bin.runner().run(&spec).unwrap_err();

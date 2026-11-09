@@ -1,0 +1,55 @@
+name: ci
+
+# The same three checks CONTRIBUTING.md asks a contributor to run, plus the installer's
+# syntax. Deliberately only official actions: this is a program that removes software, so
+# a third-party action in its supply chain is a risk nobody needs for a lint.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: |
+          if command -v rustup >/dev/null 2>&1; then
+            rustup toolchain install stable --profile minimal --no-self-update
+            rustup default stable
+          fi
+          rustc --version
+          cargo --version
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      - name: Lints
+        run: cargo clippy --all-targets -- -D warnings
+
+      # The suite uses fixed command output and fake toolchains, so it needs no package
+      # manager, no root and no network, and it never modifies the machine it runs on.
+      - name: Tests
+        run: cargo test --all-targets
+
+      - name: Installer syntax
+        run: bash -n install.sh
+
+      # Proves the installer works on a machine that has no pacman: the adapters report
+      # themselves unavailable and the program still starts and exports an inventory.
+      - name: Installer dry run
+        run: ./install.sh --dry-run --no-plugin --no-path

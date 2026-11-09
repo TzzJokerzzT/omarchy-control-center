@@ -134,6 +134,12 @@ fn print_plan(
     kind: crate::domain::OperationKind,
     read_only: bool,
 ) -> anyhow::Result<()> {
+    // Refuse before reading anything: a read-only session must not even look for a
+    // component to plan against, and the answer must not depend on what is installed.
+    if read_only {
+        return Err(anyhow::anyhow!("{}", operations::PrepareError::ReadOnly));
+    }
+
     #[derive(serde::Serialize)]
     struct PlanExport<'a> {
         fingerprint: &'a str,
