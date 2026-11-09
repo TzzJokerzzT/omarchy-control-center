@@ -1,0 +1,6 @@
+# Every file in this repository is owned by the maintainer.
+#
+# With "Require review from Code Owners" enabled on `main`, a pull request cannot be
+# merged until @TzzJokerzzT approves it. Contributors do not need write access: they fork,
+# open a pull request, and the maintainer reviews, approves and merges.
+* @TzzJokerzzT
