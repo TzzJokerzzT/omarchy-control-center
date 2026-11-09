@@ -10,4 +10,5 @@ pub mod reclaim;
 pub mod system;
 #[cfg(test)]
 pub mod test_support;
+pub mod update;
 pub mod validate;

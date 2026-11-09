@@ -6,7 +6,17 @@ and the rules for bumping it are in [`docs/versioning.md`](docs/versioning.md).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Update check** (`--check-update`, and `check_for_updates = true` in the configuration):
+  reads the release API once and says whether a newer version exists. Off by default, uses
+  `curl`, HTTPS only, with a deadline; a failed check goes to the log and never to the screen.
+- **Verified update** (`--update --yes`): downloads the published binary, requires the
+  release's `SHA256SUMS`, verifies the hash, and swaps the binary with an atomic rename. A
+  missing checksum or a mismatch stops before anything is written over the installed binary.
+  Downloaded content is never executed.
+- **Release workflow**: a `v*` tag builds the binary, publishes `SHA256SUMS`, refuses a tag
+  that disagrees with `Cargo.toml`, and creates the GitHub release.
 
 ## [0.2.0] — themes, cleanup and packaging
 

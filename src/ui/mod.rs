@@ -137,6 +137,10 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &UiState) {
         muted(p, "   ·   "),
         search_span(state),
     ];
+    if let Some(hint) = &state.update_hint {
+        spans.push(muted(p, "   ·   "));
+        spans.push(semantic(p.warning, format!("↑ {hint}")));
+    }
     if state.read_only {
         spans.push(muted(p, "   ·   "));
         spans.push(semantic(p.warning, "READ-ONLY"));

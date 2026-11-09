@@ -19,3 +19,8 @@ extra_search_paths = []
 # each theme's id, or look in docs/themes.md. A theme pinned here wins over the one chosen
 # in the selector.
 # theme = "cyberpunk"
+
+# Ask the release API once at startup whether a newer version exists, and show it in the
+# header. Off by default: this is the only thing in the program that touches the network.
+# It never installs anything; use 'control-center --update --yes' for that.
+check_for_updates = false

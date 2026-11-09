@@ -44,6 +44,19 @@ pub struct Args {
     #[arg(long, value_name = "NATIVE_ID")]
     pub print_plan: Option<String>,
 
+    /// Ask the release API whether a newer version exists, print the answer, and exit.
+    /// Reads the network only; nothing is downloaded or installed.
+    #[arg(long)]
+    pub check_update: bool,
+
+    /// Download, verify and install the newest release over this binary. Requires --yes.
+    #[arg(long, requires = "yes")]
+    pub update: bool,
+
+    /// Confirm an action that would otherwise ask.
+    #[arg(long)]
+    pub yes: bool,
+
     /// Operation to plan with `--print-plan`.
     #[arg(
         long,

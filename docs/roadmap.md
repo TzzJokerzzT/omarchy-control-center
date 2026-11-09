@@ -42,7 +42,8 @@ promise: each line names its blocker, because an item without one is just a wish
 | CI workflow | Not added yet | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` on push |
 | AUR package | The project is not packaged | A `PKGBUILD` building from the tagged source; `install.sh` covers the source install in the meantime |
 | `omarchy plugin add <url>` for the widget | The manager clones a repository whose **root** is the plugin; ours is a subfolder of a Rust project | A separate plugin repository, or a root manifest (which would pollute the crate) |
-| Release artifacts | No tags yet | Version tags, checksums, and a changelog |
+| Release artifacts | The workflow exists; no release has been published yet | Push a `v*` tag |
+| Automatic update | Installing without being asked is the one thing this program must not do | A decision to make only if the checksum requirement stays |
 | Shell completions | `install.sh` installs the binary and the widget, nothing else | Generated completions per shell, installed next to the binary |
 | Uninstall from the interface | The installer undoes an install; the program cannot uninstall itself | Needs a decision about what "uninstall" means while the program is running |
 

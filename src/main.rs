@@ -132,6 +132,13 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
     let registry = adapters::build_registry(Arc::clone(&runner), Arc::clone(&reclaimer))
         .context("cannot build the adapter registry")?;
 
+    if args.check_update {
+        return report_update_check(runner.as_ref(), &paths).map(|()| ExitCode::SUCCESS);
+    }
+    if args.update {
+        return apply_update(runner.as_ref(), &paths).map(|()| ExitCode::SUCCESS);
+    }
+
     if args.print_inventory {
         return print_inventory(&registry, args.adapter.as_deref()).map(|()| ExitCode::SUCCESS);
     }
@@ -149,6 +156,9 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
     app::run(app::Bootstrap {
         registry: Arc::new(registry),
         reclaimer,
+        runner: Arc::clone(&runner),
+        state_dir: paths.state_dir.clone(),
+        check_for_updates: config.check_for_updates,
         theme,
         themes,
         theme_dir,
@@ -161,6 +171,55 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
     .context("interface failure")?;
 
     Ok(ExitCode::SUCCESS)
+}
+
+fn current_version() -> Option<infrastructure::update::Version> {
+    infrastructure::update::Version::parse(env!("CARGO_PKG_VERSION"))
+}
+
+/// `--check-update`: one line about the newest release. Touches the network, nothing else.
+fn report_update_check(
+    runner: &dyn infrastructure::process::CommandRunner,
+    paths: &AppPaths,
+) -> anyhow::Result<()> {
+    let current = current_version()
+        .ok_or_else(|| anyhow::anyhow!("this build has an unparseable version"))?;
+    let updater = infrastructure::update::Updater::new(runner, paths.state_dir.join("update"));
+    match updater.check(&current) {
+        Ok(outcome) => {
+            println!("{}", outcome.summary());
+            if let infrastructure::update::CheckOutcome::Newer { .. } = outcome {
+                println!("install it with: {} --update --yes", env!("CARGO_PKG_NAME"));
+            }
+            Ok(())
+        }
+        Err(error) => Err(anyhow::anyhow!("{error}")),
+    }
+}
+
+/// `--update --yes`: download, verify the published checksum, then swap the binary.
+fn apply_update(
+    runner: &dyn infrastructure::process::CommandRunner,
+    paths: &AppPaths,
+) -> anyhow::Result<()> {
+    let current = current_version()
+        .ok_or_else(|| anyhow::anyhow!("this build has an unparseable version"))?;
+    let executable = std::env::current_exe().context("cannot locate this executable")?;
+    let executable = executable.canonicalize().unwrap_or(executable);
+
+    println!("running v{current}; looking for a newer release…");
+    let updater = infrastructure::update::Updater::new(runner, paths.state_dir.join("update"));
+    match updater.install(&current, &executable) {
+        Ok(latest) if latest == current => {
+            println!("v{current} is already the newest release; nothing to do");
+            Ok(())
+        }
+        Ok(latest) => {
+            println!("installed v{latest}; it takes effect the next time you start the program");
+            Ok(())
+        }
+        Err(error) => Err(anyhow::anyhow!("{error}")),
+    }
 }
 
 /// Prints exactly the plan a destructive operation would run, and exits without

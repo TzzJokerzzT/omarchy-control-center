@@ -267,6 +267,41 @@ it cannot install from a subfolder of this project. Copying the folder is the ho
 instruction until the widget lives in its own repository — see
 [`docs/roadmap.md`](docs/roadmap.md).
 
+## Updates
+
+Two commands, and neither of them installs anything on its own:
+
+```sh
+control-center --check-update     # one line: is there a newer release? reads only
+control-center --update --yes     # download, verify, swap the binary
+```
+
+`--update` **refuses to install without a published checksum**: the release must ship a
+`SHA256SUMS` asset, the download is verified against it, and a mismatch stops before a single
+byte touches the installed binary. Downloaded content is never executed — the new binary is
+written next to the current one and swapped in with an atomic rename, and it takes effect
+the next time you start it.
+
+The interface can tell you too, but only if you ask for it:
+
+```toml
+# ~/.config/omarchy-control-center/config.toml
+check_for_updates = true
+```
+
+With that on, the program reads the release API once at startup, in the background, and shows
+`↑ vX.Y.Z` in the header when a newer version exists. It never installs anything from there
+and a failed check goes to the log, not to your screen. Off by default: a program that
+contacts a server should be asked to, not assumed to.
+
+Requirements and limits:
+
+* `curl` is used for the two reads; without it the check reports that it cannot run.
+* The API is GitHub's, over HTTPS only (`--proto =https`), with a deadline on every request.
+* Only the published `x86_64-linux` binary is offered. Anything else is reported, not guessed.
+* Nothing is published for the current version yet: the release workflow runs when a `v*` tag
+  is pushed, and until then `--check-update` has nothing to compare against.
+
 ## Themes
 
 Six palettes ship with the program, plus a `default` that keeps your terminal's own colours:

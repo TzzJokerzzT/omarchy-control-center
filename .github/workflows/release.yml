@@ -1,0 +1,67 @@
+name: release
+
+# Triggered by a tag, so the release is exactly the tagged source. It builds the binary,
+# publishes a SHA256SUMS asset next to it, and creates the GitHub release. Without that
+# checksum asset the client refuses to install an update, so this workflow is what makes
+# `--update` possible at all.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rust toolchain
+        run: |
+          if command -v rustup >/dev/null 2>&1; then
+            rustup toolchain install stable --profile minimal --no-self-update
+            rustup default stable
+          fi
+          rustc --version
+
+      # The tag and Cargo.toml must agree: a release whose binary reports a different
+      # version than its tag would make every future update check wrong.
+      - name: Tag matches the version in Cargo.toml
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          declared="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "tag: $tag"
+          echo "Cargo.toml: $declared"
+          if [ "$tag" != "$declared" ]; then
+            echo "::error::the tag v$tag does not match Cargo.toml version $declared"
+            exit 1
+          fi
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package the binary and its checksum
+        run: |
+          mkdir -p dist
+          cp target/release/omarchy-control-center dist/omarchy-control-center-x86_64-linux
+          chmod 755 dist/omarchy-control-center-x86_64-linux
+          cd dist
+          sha256sum omarchy-control-center-x86_64-linux > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "See CHANGELOG.md for what changed in this version." \
+            dist/omarchy-control-center-x86_64-linux \
+            dist/SHA256SUMS

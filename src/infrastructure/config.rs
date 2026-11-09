@@ -28,6 +28,9 @@ pub struct Config {
     pub extra_search_paths: Vec<PathBuf>,
     /// Theme id to start with. Overrides the one chosen in the theme selector.
     pub theme: Option<String>,
+    /// Ask the release API at startup whether a newer version exists. Off by default: a
+    /// program that contacts a server should be asked to, not assumed to.
+    pub check_for_updates: bool,
 }
 
 impl Config {

@@ -135,6 +135,8 @@ pub struct UiState {
     pub history: History,
     pub history_entries: Vec<OperationRecord>,
     pub history_selected: usize,
+    /// One line about a newer release, when the optional check found one.
+    pub update_hint: Option<String>,
     pub quit: bool,
     pub status_line: String,
 }
@@ -189,6 +191,7 @@ impl UiState {
             history,
             history_entries: Vec::new(),
             history_selected: 0,
+            update_hint: None,
             quit: false,
             status_line,
         }
@@ -276,6 +279,7 @@ impl UiState {
                         "no component could be loaded: open the adapters view (a)".to_string();
                 }
             }
+            Message::UpdateAvailable(hint) => self.update_hint = Some(hint),
             Message::Enriched { id, fields } => {
                 self.enrichment = Some((id, fields));
             }
@@ -990,6 +994,7 @@ impl UiState {
 
 enum Message {
     Loaded(Box<InventorySnapshot>),
+    UpdateAvailable(String),
     Enriched {
         id: ComponentId,
         fields: Vec<DetailField>,
@@ -998,6 +1003,12 @@ enum Message {
 
 pub struct Bootstrap {
     pub registry: Arc<AdapterRegistry>,
+    /// Used for the optional update check, which is the only thing in this program that
+    /// touches the network.
+    pub runner: Arc<dyn crate::infrastructure::process::CommandRunner>,
+    pub state_dir: std::path::PathBuf,
+    /// Off unless the configuration asks for it.
+    pub check_for_updates: bool,
     pub theme: crate::ui::theme::Theme,
     pub themes: crate::ui::theme::ThemeCatalogue,
     pub theme_dir: std::path::PathBuf,
@@ -1017,6 +1028,13 @@ pub fn run(bootstrap: Bootstrap) -> anyhow::Result<()> {
 
     let (sender, receiver) = mpsc::channel();
     spawn_loader(Arc::clone(&bootstrap.registry), sender.clone());
+    if bootstrap.check_for_updates {
+        spawn_update_check(
+            Arc::clone(&bootstrap.runner),
+            bootstrap.state_dir.clone(),
+            sender.clone(),
+        );
+    }
 
     let mut state = UiState::new(
         bootstrap.system,
@@ -1043,6 +1061,35 @@ pub fn run(bootstrap: Bootstrap) -> anyhow::Result<()> {
     drop(terminal);
     session.suspend().ok();
     outcome
+}
+
+/// The only network access in the program, and it is opt-in: one read of the release API,
+/// in the background, which never blocks the interface and never installs anything.
+fn spawn_update_check(
+    runner: Arc<dyn crate::infrastructure::process::CommandRunner>,
+    state_dir: std::path::PathBuf,
+    sender: mpsc::Sender<Message>,
+) {
+    std::thread::spawn(move || {
+        let Some(current) =
+            crate::infrastructure::update::Version::parse(env!("CARGO_PKG_VERSION"))
+        else {
+            return;
+        };
+        let updater =
+            crate::infrastructure::update::Updater::new(runner.as_ref(), state_dir.join("update"));
+        match updater.check(&current) {
+            Ok(outcome) if outcome.is_newer() => {
+                let _ = sender.send(Message::UpdateAvailable(outcome.summary()));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                // A failed check is not the user's problem: it must not become noise in the
+                // interface. It goes to the log and nowhere else.
+                tracing::info!(%error, "update check failed");
+            }
+        }
+    });
 }
 
 fn spawn_loader(registry: Arc<AdapterRegistry>, sender: mpsc::Sender<Message>) {

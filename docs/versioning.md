@@ -32,8 +32,13 @@ the specification of semver allows for `0.y.z` and pretending otherwise would be
    git push origin main --follow-tags
    ```
 
-5. The tag is the release. `install.sh` builds from the tag's source, so nothing else has to
-   be published for a release to be installable.
+5. The tag is the release. `.github/workflows/release.yml` builds the binary, publishes it
+   with a `SHA256SUMS` asset, and creates the GitHub release. The workflow refuses a tag that
+   disagrees with `Cargo.toml`, because a binary that reports a different version than its tag
+   would make every later update check wrong.
+
+`install.sh` builds from source, and `--update` consumes the published binary plus its
+checksum. Both paths stay available: a distribution package is not required for either.
 
 ## What counts as a breaking change here
 
