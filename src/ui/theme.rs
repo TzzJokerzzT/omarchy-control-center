@@ -311,6 +311,92 @@ pub fn load_theme_file(path: &Path) -> Result<Theme, ThemeError> {
     })
 }
 
+/// `#rrggbb` for any colour a palette can hold: RGB stays as it is, a named terminal colour
+/// becomes the closest standard value.
+pub fn to_hex(color: Color) -> Option<String> {
+    let (red, green, blue) = match color {
+        Color::Rgb(red, green, blue) => (red, green, blue),
+        Color::Black => (0x00, 0x00, 0x00),
+        Color::Red => (0xcd, 0x31, 0x31),
+        Color::Green => (0x0d, 0xbc, 0x79),
+        Color::Yellow => (0xe5, 0xe5, 0x10),
+        Color::Blue => (0x24, 0x72, 0xc8),
+        Color::Magenta => (0xbc, 0x3f, 0xbc),
+        Color::Cyan => (0x11, 0xa8, 0xcd),
+        Color::Gray => (0xe5, 0xe5, 0xe5),
+        Color::DarkGray => (0x66, 0x66, 0x66),
+        Color::White => (0xff, 0xff, 0xff),
+        Color::LightRed => (0xf1, 0x4c, 0x4c),
+        Color::LightGreen => (0x23, 0xd1, 0x8b),
+        Color::LightYellow => (0xf5, 0xf5, 0x43),
+        Color::LightBlue => (0x3b, 0x8e, 0xea),
+        Color::LightMagenta => (0xd6, 0x70, 0xd6),
+        Color::LightCyan => (0x29, 0xb8, 0xdb),
+        Color::Reset | Color::Indexed(_) => return None,
+    };
+    Some(format!("#{red:02x}{green:02x}{blue:02x}"))
+}
+
+/// Writes a ready-to-edit theme file seeded from `base`, so creating one starts from
+/// something that already renders instead of from an empty buffer.
+///
+/// The file name is the id. It is never overwritten: a second call creates `custom-2.toml`.
+pub fn starter_file(directory: &Path, base: &Theme) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(directory)?;
+
+    let mut attempt = 1;
+    let path = loop {
+        let stem = if attempt == 1 {
+            "custom".to_string()
+        } else {
+            format!("custom-{attempt}")
+        };
+        let candidate = directory.join(format!("{stem}.toml"));
+        if !candidate.exists() {
+            break candidate;
+        }
+        attempt += 1;
+        if attempt > 99 {
+            return Err(std::io::Error::other(
+                "too many custom themes already exist",
+            ));
+        }
+    };
+
+    let palette = &base.palette;
+    let mut text = format!(
+        "# Written by Omarchy Control Center from the '{}' palette.\n\
+         # The file name is the theme id: this one is '{}'.\n\
+         # Edit the values, save, and press 't' again to see it.\n\n\
+         name = \"My {}\"\n\
+         description = \"based on {}\"\n\n\
+         [colors]\n",
+        base.name,
+        path.file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        base.name,
+        base.name,
+    );
+    for (key, color) in [
+        ("background", palette.background),
+        ("foreground", palette.foreground),
+        ("muted", Some(palette.muted)),
+        ("accent", Some(palette.accent)),
+        ("success", Some(palette.success)),
+        ("warning", Some(palette.warning)),
+        ("error", Some(palette.error)),
+        ("selection", palette.selection),
+    ] {
+        if let Some(hex) = color.and_then(to_hex) {
+            text.push_str(&format!("{key} = \"{hex}\"\n"));
+        }
+    }
+
+    std::fs::write(&path, text)?;
+    Ok(path)
+}
+
 /// `#rrggbb` or `#rgb`.
 pub fn parse_hex(value: &str) -> Option<Color> {
     let hex = value.trim().strip_prefix('#')?;
@@ -547,6 +633,65 @@ selection = "#3a1f1a"
         assert_eq!(catalogue.problems.len(), 1);
         assert!(catalogue.problems[0].to_string().contains("already taken"));
         assert_eq!(catalogue.find("matrix").expect("builtin").name, "Matrix");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_starter_file_is_a_theme_that_loads_back_unchanged() {
+        let dir = sandbox("starter");
+        let base = builtin_themes()
+            .into_iter()
+            .find(|theme| theme.id == "cyberpunk")
+            .expect("cyberpunk");
+
+        let path = starter_file(&dir.join("themes"), &base).expect("write");
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("custom.toml")
+        );
+        assert!(path.exists());
+
+        let catalogue = catalogue(&dir);
+        assert!(catalogue.problems.is_empty(), "{:?}", catalogue.problems);
+        let created = catalogue.find("custom").expect("the starter theme loads");
+        assert_eq!(created.name, "My Cyberpunk");
+        // Same palette as the base, so the starting point already looks right.
+        assert_eq!(created.palette.accent, base.palette.accent);
+        assert_eq!(created.palette.background, base.palette.background);
+        assert!(created.user_defined);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_second_starter_never_overwrites_the_first() {
+        let dir = sandbox("starter-twice");
+        let base = default_theme();
+        let first = starter_file(&dir.join("themes"), &base).expect("first");
+        let second = starter_file(&dir.join("themes"), &base).expect("second");
+
+        assert_ne!(first, second);
+        assert_eq!(
+            second.file_name().and_then(|name| name.to_str()),
+            Some("custom-2.toml")
+        );
+        assert!(first.exists(), "the first file must be left alone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_terminal_default_palette_still_produces_a_usable_starter() {
+        // The default theme has no background and uses terminal colours; the starter must
+        // translate them to hex rather than emitting invalid values.
+        let dir = sandbox("starter-default");
+        let path = starter_file(&dir.join("themes"), &default_theme()).expect("write");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            !text.contains("background"),
+            "no background is invented:\n{text}"
+        );
+        assert!(text.contains("accent = \"#11a8cd\""), "{text}");
+        let catalogue = catalogue(&dir);
+        assert_eq!(catalogue.problems.len(), 0, "{:?}", catalogue.problems);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

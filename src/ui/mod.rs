@@ -187,7 +187,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &UiState) {
     let keys = match (state.screen, state.searching) {
         (_, true) => " [type] filter  [Enter] keep  [Esc] clear ",
         (Screen::Inventory, false) => {
-            " [↑↓] move  [Enter] details  [/] search  [d] remove  [C] cleanup  [V] quarantine  [?] help "
+            " [↑↓] move [Enter] details [/] search [d] remove [t] theme [C] cleanup [V] quarantine [?] help "
         }
         (Screen::Details, false) => " [Esc] back  [a] adapters  [?] help  [q] quit ",
         (Screen::Plan, false) => " [type] the exact name  [Enter] confirm  [Esc] cancel ",
@@ -1074,7 +1074,7 @@ fn draw_themes(frame: &mut Frame, area: Rect, state: &UiState) {
         footer.push(Line::from(muted(
             p,
             format!(
-                "Drop your own theme into {} as a .toml file.",
+                "Press c to start your own from this palette (writes into {}).",
                 state
                     .theme_dir
                     .as_ref()
@@ -2143,6 +2143,10 @@ mod tests {
         // The description of the highlighted theme, and its id for config.toml.
         assert!(screen.contains("Green phosphor on black"), "{screen}");
         assert!(screen.contains("theme = \"matrix\""), "{screen}");
+        assert!(
+            screen.contains("Press c to start your own"),
+            "creating a theme is not discoverable:\n{screen}"
+        );
     }
 
     #[test]
