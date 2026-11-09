@@ -21,6 +21,7 @@ use crate::domain::{
     OperationPlan, OperationRequest,
 };
 use crate::infrastructure::process::CommandRunner;
+use crate::infrastructure::reclaim::Reclaimer;
 
 const ADAPTER_ID: &str = "hyprland";
 
@@ -30,21 +31,34 @@ const BACKUP_MARKERS: &[&str] = &[".bak.", ".lacquer-backup-", ".omarchy-upgrade
 
 pub struct HyprlandAdapter {
     runner: Arc<dyn CommandRunner>,
+    reclaimer: Arc<dyn Reclaimer>,
     config_dir: PathBuf,
 }
 
 impl HyprlandAdapter {
-    pub fn new(runner: Arc<dyn CommandRunner>) -> Self {
+    pub fn new(runner: Arc<dyn CommandRunner>, reclaimer: Arc<dyn Reclaimer>) -> Self {
         let config_dir = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_default()
             .join(".config/hypr");
-        Self { runner, config_dir }
+        Self {
+            runner,
+            reclaimer,
+            config_dir,
+        }
     }
 
     #[cfg(test)]
-    pub fn with_config_dir(runner: Arc<dyn CommandRunner>, config_dir: PathBuf) -> Self {
-        Self { runner, config_dir }
+    pub fn with_config_dir(
+        runner: Arc<dyn CommandRunner>,
+        reclaimer: Arc<dyn Reclaimer>,
+        config_dir: PathBuf,
+    ) -> Self {
+        Self {
+            runner,
+            reclaimer,
+            config_dir,
+        }
     }
 
     fn config_files(&self) -> Vec<(String, PathBuf)> {
@@ -120,8 +134,9 @@ impl HyprlandAdapter {
             },
             status: ComponentStatus::Orphan,
             confidence: DetectionConfidence::Low,
-            // Nothing here deletes configuration files, not even backups.
-            capabilities: vec![ComponentCapability::Inspect],
+            // A backup is a leftover nobody reads, so it can be moved into quarantine.
+            // A live configuration file never can, and nothing is deleted.
+            capabilities: vec![ComponentCapability::Inspect, ComponentCapability::Reclaim],
             detection: DetectionMethod::scan(&self.config_dir),
             installed_size: None,
             location: Some(path.to_path_buf()),
@@ -377,24 +392,123 @@ impl ComponentAdapter for HyprlandAdapter {
             .find(|component| component.id.native_id == native_id))
     }
 
-    /// A configuration reference can never be operated on: this adapter only inspects.
-    fn supports(&self, _component: &Component, _kind: OperationKind) -> bool {
-        false
+    /// Only a backup copy may be reclaimed: a live configuration file is never touched,
+    /// and a reference is not an object at all.
+    fn supports(&self, component: &Component, kind: OperationKind) -> bool {
+        kind == OperationKind::Reclaim
+            && component.status == ComponentStatus::Orphan
+            && component.supports(ComponentCapability::Reclaim)
+            && component
+                .location
+                .as_ref()
+                .is_some_and(|path| path.parent() == Some(self.config_dir.as_path()))
     }
 
     fn plan_operation(
         &self,
-        _request: &OperationRequest,
-        _component: &Component,
+        request: &OperationRequest,
+        component: &Component,
     ) -> Result<OperationPlan, AdapterError> {
-        Err(AdapterError::unsupported(
-            ADAPTER_ID,
-            "operations (Hyprland configuration is inspected, never modified)",
-        ))
+        if request.kind != OperationKind::Reclaim {
+            return Err(AdapterError::unsupported(
+                ADAPTER_ID,
+                "operations (Hyprland configuration is inspected, never modified)",
+            ));
+        }
+
+        let Some(location) = component.location.clone() else {
+            return Err(AdapterError::Other(format!(
+                "{} has no file recorded",
+                component.name
+            )));
+        };
+        if location.parent() != Some(self.config_dir.as_path()) {
+            return Err(AdapterError::InvalidId {
+                adapter: ADAPTER_ID.to_string(),
+                value: location.display().to_string(),
+                reason: "the file is not a direct child of the configuration directory".to_string(),
+            });
+        }
+        if !location.exists() {
+            return Err(AdapterError::command(
+                "quarantine",
+                location.display().to_string(),
+                "the backup file is no longer there".to_string(),
+            ));
+        }
+
+        let size = crate::domain::path_size(&location);
+        Ok(OperationPlan {
+            adapter: ADAPTER_ID.to_string(),
+            target: request.target.clone(),
+            target_name: component.name.clone(),
+            target_version: None,
+            kind: OperationKind::Reclaim,
+            commands: Vec::new(),
+            reclaim: vec![crate::domain::ReclaimTarget::quarantine(
+                location.clone(),
+                self.config_dir.clone(),
+                size,
+            )],
+            affected: vec![location.display().to_string()],
+            blocking: Vec::new(),
+            unknown: vec![
+                "whether any script reads this backup is unknown; Hyprland itself does not"
+                    .to_string(),
+            ],
+            notes: vec![
+                "the file is moved into the quarantine area, not deleted, and can be restored"
+                    .to_string(),
+                "the space is freed only when the quarantine entry is purged".to_string(),
+            ],
+        })
     }
 
-    fn execute(&self, _plan: &OperationPlan) -> Result<OperationOutcome, AdapterError> {
-        Err(AdapterError::unsupported(ADAPTER_ID, "operations"))
+    fn execute(&self, plan: &OperationPlan) -> Result<OperationOutcome, AdapterError> {
+        if plan.adapter != ADAPTER_ID {
+            return Err(AdapterError::InvalidId {
+                adapter: ADAPTER_ID.to_string(),
+                value: plan.adapter.clone(),
+                reason: "this plan belongs to another adapter".to_string(),
+            });
+        }
+        let stamp = crate::infrastructure::reclaim::now_unix();
+        let mut moved = 0usize;
+        let mut freed = 0u64;
+        let mut error_text = String::new();
+
+        for target in &plan.reclaim {
+            match self.reclaimer.quarantine(target, stamp) {
+                Ok(entry) => {
+                    moved += 1;
+                    freed += entry.size;
+                }
+                Err(error) => {
+                    error_text.push_str(&format!("{}: {error}\n", target.path.display()));
+                    break;
+                }
+            }
+        }
+
+        let success = error_text.is_empty() && moved == plan.reclaim.len();
+        Ok(OperationOutcome {
+            success,
+            exit_code: None,
+            command_display: format!("quarantine {} file(s)", plan.reclaim.len()),
+            stdout_tail: String::new(),
+            stderr_tail: error_text,
+            summary: if success {
+                format!(
+                    "moved {moved} backup(s) totalling {} into quarantine",
+                    crate::domain::format_size(freed)
+                )
+            } else {
+                format!(
+                    "moved {moved} of {} item(s) before stopping",
+                    plan.reclaim.len()
+                )
+            },
+        })
     }
 }
 
@@ -442,7 +556,10 @@ mod tests {
 
     fn adapter(dir: &Path) -> HyprlandAdapter {
         let runner = FakeRunner::new().with_program("present-tool");
-        HyprlandAdapter::with_config_dir(Arc::new(runner), dir.to_path_buf())
+        let reclaimer = std::sync::Arc::new(crate::infrastructure::reclaim::FileReclaimer::new(
+            dir.join(".quarantine-state"),
+        ));
+        HyprlandAdapter::with_config_dir(Arc::new(runner), reclaimer, dir.to_path_buf())
     }
 
     #[test]
@@ -466,19 +583,34 @@ mod tests {
     #[test]
     fn a_configuration_line_is_a_reference_and_never_removable() {
         let sandbox = Sandbox::new("references");
-        let listed = adapter(&sandbox.dir).list().expect("list");
-        assert!(
-            listed
-                .iter()
-                .all(|component| component.capabilities == vec![ComponentCapability::Inspect])
-        );
-        assert!(
-            listed
-                .iter()
-                .all(|component| !adapter(&sandbox.dir).supports(component, OperationKind::Remove))
-        );
-    }
+        let adapter = adapter(&sandbox.dir);
+        let listed = adapter.list().expect("list");
 
+        // Nothing in a Hyprland configuration is removable: there is no package behind a
+        // line. Only a leftover backup can be reclaimed, and that is not a removal.
+        assert!(
+            listed
+                .iter()
+                .all(|component| !component.supports(ComponentCapability::Remove))
+        );
+        assert!(
+            listed
+                .iter()
+                .all(|component| !adapter.supports(component, OperationKind::Remove))
+        );
+        for component in &listed {
+            if component.status == ComponentStatus::Orphan {
+                assert!(component.supports(ComponentCapability::Reclaim));
+            } else {
+                assert_eq!(
+                    component.capabilities,
+                    vec![ComponentCapability::Inspect],
+                    "{} must not offer any action",
+                    component.name
+                );
+            }
+        }
+    }
     #[test]
     fn extracts_uncommented_launch_targets_from_lua_and_conf() {
         let sandbox = Sandbox::new("launch");
@@ -573,9 +705,64 @@ mod tests {
     fn reports_itself_unavailable_when_there_is_no_hyprland_directory() {
         let missing = std::env::temp_dir().join(format!("occ-hypr-absent-{}", std::process::id()));
         let runner = FakeRunner::new();
-        let adapter = HyprlandAdapter::with_config_dir(Arc::new(runner), missing);
+        let reclaimer = std::sync::Arc::new(crate::infrastructure::reclaim::FileReclaimer::new(
+            std::env::temp_dir().join("occ-hypr-quarantine"),
+        ));
+        let adapter = HyprlandAdapter::with_config_dir(Arc::new(runner), reclaimer, missing);
         assert!(!adapter.status().available());
         assert!(adapter.list().expect("list").is_empty());
+    }
+
+    #[test]
+    fn a_backup_can_be_reclaimed_but_a_live_module_cannot() {
+        let sandbox = Sandbox::new("reclaim");
+        let adapter = adapter(&sandbox.dir);
+        let components = adapter.list().expect("list");
+
+        let backup = components
+            .iter()
+            .find(|component| component.status == ComponentStatus::Orphan)
+            .expect("backup")
+            .clone();
+        assert!(adapter.supports(&backup, OperationKind::Reclaim));
+        let request = OperationRequest::new(backup.id.clone(), OperationKind::Reclaim);
+        let plan = adapter.plan_operation(&request, &backup).expect("plan");
+        assert_eq!(plan.kind, OperationKind::Reclaim);
+        assert_eq!(plan.reclaim.len(), 1);
+        assert!(plan.commands.is_empty());
+        assert!(plan.is_executable());
+        assert!(
+            plan.notes
+                .iter()
+                .any(|note| note.contains("moved into the quarantine area"))
+        );
+
+        let live = components
+            .iter()
+            .find(|component| component.name == "hyprland.lua")
+            .expect("live module")
+            .clone();
+        assert!(!adapter.supports(&live, OperationKind::Reclaim));
+    }
+
+    #[test]
+    fn reclaiming_a_backup_moves_it_out_of_the_configuration_directory() {
+        let sandbox = Sandbox::new("reclaim-run");
+        let adapter = adapter(&sandbox.dir);
+        let backup = adapter
+            .list()
+            .expect("list")
+            .into_iter()
+            .find(|component| component.status == ComponentStatus::Orphan)
+            .expect("backup");
+        let path = backup.location.clone().expect("path");
+        let request = OperationRequest::new(backup.id.clone(), OperationKind::Reclaim);
+        let plan = adapter.plan_operation(&request, &backup).expect("plan");
+
+        let outcome = adapter.execute(&plan).expect("execute");
+        assert!(outcome.success, "unexpected: {}", outcome.stderr_tail);
+        assert!(!path.exists(), "it left the configuration directory");
+        assert!(outcome.summary.contains("quarantine"));
     }
 
     #[test]

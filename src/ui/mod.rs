@@ -48,6 +48,9 @@ pub fn draw(frame: &mut Frame, state: &UiState) {
         Screen::Inventory => draw_inventory(frame, layout[1], state),
         Screen::Details => draw_details_screen(frame, layout[1], state),
         Screen::Plan => draw_plan(frame, layout[1], state),
+        Screen::Cleanup => draw_cleanup(frame, layout[1], state),
+        Screen::CleanupConfirm => draw_cleanup_confirm(frame, layout[1], state),
+        Screen::Quarantine => draw_quarantine(frame, layout[1], state),
         Screen::Result => draw_result(frame, layout[1], state),
         Screen::History => draw_history(frame, layout[1], state),
         Screen::Adapters => draw_adapters(frame, layout[1], state),
@@ -136,11 +139,16 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &UiState) {
     let keys = match (state.screen, state.searching) {
         (_, true) => " [type] filter  [Enter] keep  [Esc] clear ",
         (Screen::Inventory, false) => {
-            " [↑↓] move  [Enter] details  [/] search  [d] remove  [H] history  [?] help  [q] quit "
+            " [↑↓] move  [Enter] details  [/] search  [d] remove  [C] cleanup  [V] quarantine  [?] help "
         }
         (Screen::Details, false) => " [Esc] back  [a] adapters  [?] help  [q] quit ",
         (Screen::Plan, false) => " [type] the exact name  [Enter] confirm  [Esc] cancel ",
         (Screen::Result, false) => " [Enter] back to the inventory ",
+        (Screen::Cleanup, false) => {
+            " [space] select  [A] all  [N] none  [Enter] move to quarantine  [Esc] back "
+        }
+        (Screen::CleanupConfirm, false) => " [type] the phrase  [Enter] confirm  [Esc] cancel ",
+        (Screen::Quarantine, false) => " [↑↓] browse  [r] restore  [p] purge for good  [Esc] back ",
         (Screen::History, false) => " [↑↓] browse  [Esc] back  [i] inventory ",
         (Screen::Adapters, false) => " [i] inventory  [Esc] back  [?] help  [q] quit ",
         _ => " [i] inventory  [Esc] back  [?] help  [q] quit ",
@@ -708,6 +716,212 @@ fn draw_result(frame: &mut Frame, area: Rect, state: &UiState) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn draw_cleanup(frame: &mut Frame, area: Rect, state: &UiState) {
+    let leftovers = state.reclaimable();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(Color::Yellow))
+        .title(format!(
+            " CLEANUP — {} leftover(s) {} · selected {} ",
+            leftovers.len(),
+            format_size(state.reclaimable_total()),
+            format_size(state.selected_reclaim_size())
+        ));
+
+    if leftovers.is_empty() {
+        frame.render_widget(
+            Paragraph::new(
+                "Nothing to clean up.\n\nThis screen lists only leftovers that no manager \
+                 owns: plugin removal backups and Hyprland backup copies. System packages are \
+                 never listed here — those are removed through the package manager, one at a \
+                 time.",
+            )
+            .block(block)
+            .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+
+    let mut items: Vec<ListItem> = Vec::new();
+    for (index, component) in leftovers.iter().enumerate() {
+        let selected = state.cleanup_selected.contains(&component.id);
+        let marker = if selected {
+            accent("[x]")
+        } else {
+            muted("[ ]")
+        };
+        let size = component
+            .location
+            .as_ref()
+            .map(|path| format_size(crate::domain::path_size(path)))
+            .unwrap_or_else(|| UNAVAILABLE.to_string());
+        let path = component
+            .location
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| UNAVAILABLE.to_string());
+        let style = if index == state.cleanup_index {
+            Style::new().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::new()
+        };
+        items.push(
+            ListItem::new(vec![
+                Line::from(vec![
+                    marker,
+                    muted(" "),
+                    bold(component.name.clone()),
+                    muted(format!("  {} · {}", component.id.adapter, size)),
+                ]),
+                Line::from(vec![muted("     "), muted(path)]),
+            ])
+            .style(style),
+        );
+    }
+
+    let list = List::new(items).block(block);
+    let mut list_state = ListState::default();
+    list_state.select(Some(
+        state.cleanup_index.min(leftovers.len().saturating_sub(1)),
+    ));
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+fn draw_cleanup_confirm(frame: &mut Frame, area: Rect, state: &UiState) {
+    let Some(pending) = &state.pending_cleanup else {
+        frame.render_widget(
+            Paragraph::new("No cleanup is being prepared.")
+                .block(Block::default().borders(Borders::ALL)),
+            area,
+        );
+        return;
+    };
+
+    let (title, headline, explain) = match pending.action {
+        crate::app::CleanupAction::Quarantine => (
+            " MOVE TO QUARANTINE ",
+            format!(
+                "{} item(s), {} in total",
+                pending.plans.len(),
+                format_size(pending.total)
+            ),
+            "Each item is moved into the quarantine area, not deleted. It can be restored \
+             from there, and the space is only freed when the entry is purged.",
+        ),
+        crate::app::CleanupAction::Purge => (
+            " PURGE QUARANTINE ",
+            format!("{} in total", format_size(pending.total)),
+            "This deletes the quarantined copy for good. There is no way back after this \
+             step.",
+        ),
+    };
+
+    let mut lines = vec![
+        Line::from(semantic(
+            if pending.action == crate::app::CleanupAction::Quarantine {
+                Color::Yellow
+            } else {
+                Color::Red
+            },
+            headline,
+        )),
+        Line::from(""),
+        Line::from(muted(explain)),
+        Line::from(""),
+    ];
+
+    for plan in &pending.plans {
+        for target in &plan.plan.reclaim {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::raw(target.path.display().to_string()),
+                muted(format!("  ({})", format_size(target.size))),
+            ]));
+        }
+        for note in &plan.plan.unknown {
+            lines.push(Line::from(vec![
+                semantic(Color::Yellow, "  not determined: "),
+                muted(note.clone()),
+            ]));
+        }
+    }
+    for entry in &pending.entries {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::raw(entry.original.display().to_string()),
+            muted(format!("  ({})", format_size(entry.size))),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        bold("Type  "),
+        accent(pending.phrase.clone()),
+        bold("  to confirm: "),
+        Span::styled(state.cleanup_input.clone(), Style::new().fg(Color::Yellow)),
+        Span::styled("▏", Style::new().fg(Color::Cyan)),
+    ]));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn draw_quarantine(frame: &mut Frame, area: Rect, state: &UiState) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" QUARANTINE — {} item(s) ", state.quarantine.len()));
+
+    if state.quarantine.is_empty() {
+        frame.render_widget(
+            Paragraph::new(
+                "The quarantine area is empty.\n\nAnything moved from the cleanup screen lands \
+                 here with its original path recorded, so it can be restored. Purging is the only \
+                 step that frees the space, and it deletes only what this list records.",
+            )
+            .block(block)
+            .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+
+    let mut items: Vec<ListItem> = Vec::new();
+    for (index, entry) in state.quarantine.iter().enumerate() {
+        let style = if index == state.quarantine_index {
+            Style::new().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::new()
+        };
+        items.push(
+            ListItem::new(vec![
+                Line::from(vec![
+                    bold(entry.original.display().to_string()),
+                    muted(format!("  {}", format_size(entry.size))),
+                ]),
+                Line::from(vec![
+                    muted("     quarantined at "),
+                    muted(entry.location.display().to_string()),
+                ]),
+            ])
+            .style(style),
+        );
+    }
+
+    let list = List::new(items).block(block);
+    let mut list_state = ListState::default();
+    list_state.select(Some(
+        state
+            .quarantine_index
+            .min(state.quarantine.len().saturating_sub(1)),
+    ));
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 fn draw_history(frame: &mut Frame, area: Rect, state: &UiState) {

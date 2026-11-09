@@ -20,8 +20,10 @@ use ratatui::backend::CrosstermBackend;
 use crate::application::ConfirmDecision;
 use crate::application::operations::{self, OperationRecord, PendingOperation};
 use crate::application::{AdapterRegistry, InventorySnapshot, search};
+use crate::domain::Quarantined;
 use crate::domain::{Component, ComponentId, DetailField, OperationKind, SourceGroup};
 use crate::infrastructure::history::History;
+use crate::infrastructure::reclaim::Reclaimer;
 use crate::infrastructure::system::SystemInfo;
 use crate::term::TerminalSession;
 use crate::ui;
@@ -31,6 +33,9 @@ pub enum Screen {
     Inventory,
     Details,
     Plan,
+    Cleanup,
+    CleanupConfirm,
+    Quarantine,
     Result,
     History,
     Adapters,
@@ -49,6 +54,25 @@ pub enum Focus {
 pub struct Actions<'a> {
     pub registry: &'a AdapterRegistry,
     pub session: &'a mut TerminalSession,
+    pub reclaimer: &'a dyn Reclaimer,
+}
+
+/// What a cleanup confirmation would do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanupAction {
+    /// Move leftovers into quarantine.
+    Quarantine,
+    /// Delete quarantine entries for good.
+    Purge,
+}
+
+/// A cleanup waiting for its phrase.
+pub struct PendingCleanup {
+    pub action: CleanupAction,
+    pub plans: Vec<PendingOperation>,
+    pub entries: Vec<Quarantined>,
+    pub total: u64,
+    pub phrase: String,
 }
 
 pub struct UiState {
@@ -69,6 +93,13 @@ pub struct UiState {
     pub query: String,
     pub searching: bool,
     pub pending: Option<PendingOperation>,
+    /// Selected leftovers in the cleanup view.
+    pub cleanup_selected: std::collections::BTreeSet<crate::domain::ComponentId>,
+    pub cleanup_index: usize,
+    pub quarantine: Vec<Quarantined>,
+    pub quarantine_index: usize,
+    pub pending_cleanup: Option<PendingCleanup>,
+    pub cleanup_input: String,
     pub plan_input: String,
     pub last_record: Option<OperationRecord>,
     /// Extra facts for the open detail view, with the component they belong to.
@@ -111,6 +142,12 @@ impl UiState {
             query: String::new(),
             searching: false,
             pending: None,
+            cleanup_selected: std::collections::BTreeSet::new(),
+            cleanup_index: 0,
+            quarantine: Vec::new(),
+            quarantine_index: 0,
+            pending_cleanup: None,
+            cleanup_input: String::new(),
             plan_input: String::new(),
             last_record: None,
             enrichment: None,
@@ -254,6 +291,200 @@ impl UiState {
         self.selected = next.clamp(0, count as isize - 1) as usize;
     }
 
+    /// Leftovers this session could move into quarantine.
+    pub fn reclaimable(&self) -> Vec<&Component> {
+        self.snapshot
+            .components
+            .iter()
+            .filter(|component| component.supports(crate::domain::ComponentCapability::Reclaim))
+            .collect()
+    }
+
+    pub fn reclaimable_total(&self) -> u64 {
+        self.reclaimable()
+            .iter()
+            .filter_map(|component| component.location.as_ref())
+            .map(|path| crate::domain::path_size(path))
+            .sum()
+    }
+
+    pub fn selected_reclaim_size(&self) -> u64 {
+        self.reclaimable()
+            .iter()
+            .filter(|component| self.cleanup_selected.contains(&component.id))
+            .filter_map(|component| component.location.as_ref())
+            .map(|path| crate::domain::path_size(path))
+            .sum()
+    }
+
+    fn refresh_quarantine(&mut self, reclaimer: &dyn Reclaimer) {
+        match reclaimer.entries() {
+            Ok(entries) => {
+                self.quarantine = entries;
+                self.quarantine_index = self
+                    .quarantine_index
+                    .min(self.quarantine.len().saturating_sub(1));
+            }
+            Err(error) => {
+                self.quarantine.clear();
+                self.status_line = format!("cannot read the quarantine area: {error}");
+            }
+        }
+    }
+
+    /// Builds the confirmation for the selected leftovers.
+    fn prepare_cleanup(&mut self, registry: &AdapterRegistry) {
+        let mut plans = Vec::new();
+        let mut problems = Vec::new();
+        for component in self.reclaimable() {
+            if !self.cleanup_selected.contains(&component.id) {
+                continue;
+            }
+            match operations::prepare(registry, component, OperationKind::Reclaim, self.read_only) {
+                Ok(pending) => plans.push(pending),
+                Err(error) => problems.push(format!("{}: {error}", component.name)),
+            }
+        }
+
+        if plans.is_empty() {
+            self.status_line = if problems.is_empty() {
+                "select at least one leftover to move".to_string()
+            } else {
+                problems.join("; ")
+            };
+            return;
+        }
+        if !problems.is_empty() {
+            // A partial batch is never executed silently: the refusal is shown and the
+            // batch is not built.
+            self.status_line = format!("nothing was prepared: {}", problems.join("; "));
+            return;
+        }
+
+        let total: u64 = plans.iter().map(|plan| plan.plan.reclaim_size()).sum();
+        self.cleanup_input.clear();
+        self.pending_cleanup = Some(PendingCleanup {
+            action: CleanupAction::Quarantine,
+            phrase: format!("quarantine {}", plans.len()),
+            total,
+            plans,
+            entries: Vec::new(),
+        });
+        self.open(Screen::CleanupConfirm);
+    }
+
+    fn prepare_purge(&mut self) {
+        let Some(entry) = self.quarantine.get(self.quarantine_index).cloned() else {
+            self.status_line = "nothing in quarantine to purge".to_string();
+            return;
+        };
+        self.cleanup_input.clear();
+        self.pending_cleanup = Some(PendingCleanup {
+            action: CleanupAction::Purge,
+            phrase: format!("purge {}", entry.original.display()),
+            total: entry.size,
+            plans: Vec::new(),
+            entries: vec![entry],
+        });
+        self.open(Screen::CleanupConfirm);
+    }
+
+    /// Runs the confirmed cleanup. Every plan is re-verified immediately before it runs.
+    fn run_cleanup(&mut self, actions: &mut Actions<'_>) {
+        let Some(pending) = self.pending_cleanup.take() else {
+            return;
+        };
+        if pending.phrase != self.cleanup_input.trim() {
+            self.status_line = format!(
+                "type exactly '{}' to confirm, or Esc to cancel",
+                pending.phrase
+            );
+            self.pending_cleanup = Some(pending);
+            return;
+        }
+
+        let mut done = 0usize;
+        let mut bytes = 0u64;
+        let mut failure: Option<String> = None;
+
+        match pending.action {
+            CleanupAction::Quarantine => {
+                for plan in &pending.plans {
+                    match operations::execute_verified(actions.registry, plan, self.read_only) {
+                        Ok(outcome) if outcome.success => {
+                            done += 1;
+                            bytes += plan.plan.reclaim_size();
+                        }
+                        Ok(outcome) => {
+                            failure = Some(outcome.summary);
+                            break;
+                        }
+                        Err(error) => {
+                            failure = Some(error.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+            CleanupAction::Purge => {
+                for entry in &pending.entries {
+                    match actions.reclaimer.purge(entry) {
+                        Ok(()) => {
+                            done += 1;
+                            bytes += entry.size;
+                        }
+                        Err(error) => {
+                            failure = Some(error.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        self.status_line = match failure {
+            None => format!(
+                "{} {} item(s) ({})",
+                if pending.action == CleanupAction::Quarantine {
+                    "moved into quarantine:"
+                } else {
+                    "purged:"
+                },
+                done,
+                crate::domain::format_size(bytes)
+            ),
+            Some(error) => format!(
+                "stopped after {done} item(s): {error}{}",
+                if pending.action == CleanupAction::Quarantine {
+                    " — already moved items stay recoverable in quarantine"
+                } else {
+                    ""
+                }
+            ),
+        };
+
+        self.cleanup_selected.clear();
+        self.cleanup_input.clear();
+        self.pending_cleanup = None;
+        self.refresh_quarantine(actions.reclaimer);
+        self.screen = Screen::Inventory;
+        self.reload_requested = true;
+    }
+
+    fn restore_quarantine(&mut self, actions: &Actions<'_>) {
+        let Some(entry) = self.quarantine.get(self.quarantine_index).cloned() else {
+            self.status_line = "nothing in quarantine to restore".to_string();
+            return;
+        };
+        match actions.reclaimer.restore(&entry) {
+            Ok(()) => {
+                self.status_line = format!("restored {}", entry.original.display());
+                self.refresh_quarantine(actions.reclaimer);
+            }
+            Err(error) => self.status_line = error.to_string(),
+        }
+    }
+
     fn refresh_history(&mut self) {
         match self.history.recent(50) {
             Ok(entries) => {
@@ -291,6 +522,7 @@ impl UiState {
         if !component.supports(match kind {
             OperationKind::Remove => crate::domain::ComponentCapability::Remove,
             OperationKind::Update => crate::domain::ComponentCapability::Update,
+            OperationKind::Reclaim => crate::domain::ComponentCapability::Reclaim,
         }) {
             self.status_line = format!(
                 "{} is not offered for {} by its adapter",
@@ -410,6 +642,27 @@ impl UiState {
             return;
         }
 
+        // A cleanup confirmation owns every printable key, for the same reason.
+        if self.screen == Screen::CleanupConfirm {
+            match key.code {
+                KeyCode::Esc => {
+                    self.pending_cleanup = None;
+                    self.cleanup_input.clear();
+                    self.status_line = "cancelled: nothing was moved or purged".to_string();
+                    self.back();
+                }
+                KeyCode::Enter => self.run_cleanup(actions),
+                KeyCode::Backspace => {
+                    self.cleanup_input.pop();
+                }
+                KeyCode::Char(character) if !character.is_control() => {
+                    self.cleanup_input.push(character);
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // The confirmation field owns every printable key, so a name containing
         // 'q' can be typed without quitting.
         if self.screen == Screen::Plan {
@@ -465,6 +718,39 @@ impl UiState {
             }
             KeyCode::Char('i') => self.screen = Screen::Inventory,
             KeyCode::Char('a') => self.open(Screen::Adapters),
+            KeyCode::Char('C') => {
+                if self.screen != Screen::Cleanup {
+                    self.cleanup_selected.clear();
+                    self.cleanup_index = 0;
+                    self.open(Screen::Cleanup);
+                }
+            }
+            KeyCode::Char('V') => {
+                self.refresh_quarantine(actions.reclaimer);
+                self.open(Screen::Quarantine);
+            }
+            KeyCode::Char(' ') if self.screen == Screen::Cleanup => {
+                if let Some(component) = self.reclaimable().get(self.cleanup_index) {
+                    let id = component.id.clone();
+                    if !self.cleanup_selected.insert(id.clone()) {
+                        self.cleanup_selected.remove(&id);
+                    }
+                }
+            }
+            KeyCode::Char('A') if self.screen == Screen::Cleanup => {
+                self.cleanup_selected = self
+                    .reclaimable()
+                    .iter()
+                    .map(|component| component.id.clone())
+                    .collect();
+            }
+            KeyCode::Char('N') if self.screen == Screen::Cleanup => {
+                self.cleanup_selected.clear();
+            }
+            KeyCode::Char('r') if self.screen == Screen::Quarantine => {
+                self.restore_quarantine(actions);
+            }
+            KeyCode::Char('p') if self.screen == Screen::Quarantine => self.prepare_purge(),
             KeyCode::Char('H') => {
                 if self.screen != Screen::History {
                     self.refresh_history();
@@ -494,10 +780,24 @@ impl UiState {
                         }
                     }
                 },
-                Screen::Result | Screen::Details | Screen::History => self.back(),
+                Screen::Cleanup if !self.cleanup_selected.is_empty() => {
+                    self.prepare_cleanup(actions.registry);
+                }
+                Screen::Cleanup => {
+                    self.status_line = "select a leftover with space first".to_string();
+                }
+                Screen::Result | Screen::Details | Screen::History | Screen::Quarantine => {
+                    self.back();
+                }
                 _ => {}
             },
             KeyCode::Up | KeyCode::Char('k') => match (self.screen, self.focus) {
+                (Screen::Cleanup, _) => {
+                    self.cleanup_index = self.cleanup_index.saturating_sub(1);
+                }
+                (Screen::Quarantine, _) => {
+                    self.quarantine_index = self.quarantine_index.saturating_sub(1);
+                }
                 (Screen::Inventory, Focus::Sidebar) => self.move_sidebar(-1),
                 (Screen::Inventory, Focus::List) => self.move_selection(-1),
                 (Screen::History, _) => {
@@ -506,6 +806,16 @@ impl UiState {
                 _ => {}
             },
             KeyCode::Down | KeyCode::Char('j') => match (self.screen, self.focus) {
+                (Screen::Cleanup, _) => {
+                    if self.cleanup_index + 1 < self.reclaimable().len() {
+                        self.cleanup_index += 1;
+                    }
+                }
+                (Screen::Quarantine, _) => {
+                    if self.quarantine_index + 1 < self.quarantine.len() {
+                        self.quarantine_index += 1;
+                    }
+                }
                 (Screen::Inventory, Focus::Sidebar) => self.move_sidebar(1),
                 (Screen::Inventory, Focus::List) => self.move_selection(1),
                 (Screen::History, _) if self.history_selected + 1 < self.history_entries.len() => {
@@ -538,6 +848,7 @@ enum Message {
 
 pub struct Bootstrap {
     pub registry: Arc<AdapterRegistry>,
+    pub reclaimer: Arc<dyn crate::infrastructure::reclaim::Reclaimer>,
     pub history: History,
     pub system: SystemInfo,
     pub read_only: bool,
@@ -560,12 +871,14 @@ pub fn run(bootstrap: Bootstrap) -> anyhow::Result<()> {
         bootstrap.history,
     );
     let registry = Arc::clone(&bootstrap.registry);
+    let reclaimer = Arc::clone(&bootstrap.reclaimer);
     let outcome = event_loop(
         &mut terminal,
         &mut state,
         &receiver,
         &registry,
         &mut session,
+        reclaimer.as_ref(),
         &sender,
     );
     drop(terminal);
@@ -586,6 +899,7 @@ fn event_loop(
     receiver: &Receiver<Message>,
     registry: &Arc<AdapterRegistry>,
     session: &mut TerminalSession,
+    reclaimer: &dyn Reclaimer,
     sender: &mpsc::Sender<Message>,
 ) -> anyhow::Result<()> {
     loop {
@@ -628,6 +942,7 @@ fn event_loop(
                     let mut actions = Actions {
                         registry: registry.as_ref(),
                         session,
+                        reclaimer,
                     };
                     state.on_key(key, &mut actions);
                 }

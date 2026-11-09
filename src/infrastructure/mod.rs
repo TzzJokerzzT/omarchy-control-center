@@ -5,6 +5,7 @@ pub mod history;
 pub mod logging;
 pub mod paths;
 pub mod process;
+pub mod reclaim;
 pub mod system;
 #[cfg(test)]
 pub mod test_support;

@@ -22,6 +22,7 @@ use crate::infrastructure::config::Config;
 use crate::infrastructure::history::History;
 use crate::infrastructure::paths::AppPaths;
 use crate::infrastructure::process::SystemRunner;
+use crate::infrastructure::reclaim::FileReclaimer;
 use crate::infrastructure::system::{SystemInfo, guard_not_root};
 
 fn main() -> ExitCode {
@@ -92,7 +93,9 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
         }
         Arc::new(SystemRunner::with_extra_paths(search_paths))
     };
-    let registry = adapters::build_registry(Arc::clone(&runner))
+    let reclaimer: Arc<dyn infrastructure::reclaim::Reclaimer> =
+        Arc::new(FileReclaimer::new(paths.state_dir.clone()));
+    let registry = adapters::build_registry(Arc::clone(&runner), Arc::clone(&reclaimer))
         .context("cannot build the adapter registry")?;
 
     if args.print_inventory {
@@ -111,6 +114,7 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
 
     app::run(app::Bootstrap {
         registry: Arc::new(registry),
+        reclaimer,
         history: History::new(paths.history_file.clone()),
         system,
         read_only,

@@ -29,6 +29,7 @@ use crate::domain::{
     OperationPlan, OperationRequest, PlannedCommand, tail_text,
 };
 use crate::infrastructure::process::{CommandOutput, CommandRunner, CommandSpec, ProcessError};
+use crate::infrastructure::reclaim::Reclaimer;
 use crate::infrastructure::validate::validate_plugin_id;
 
 const ADAPTER_ID: &str = "omarchy";
@@ -73,27 +74,34 @@ struct Manifest {
 
 pub struct OmarchyPluginAdapter {
     runner: Arc<dyn CommandRunner>,
+    reclaimer: Arc<dyn Reclaimer>,
     plugins_dir: PathBuf,
 }
 
 impl OmarchyPluginAdapter {
     /// Uses the real user plugin directory.
-    pub fn new(runner: Arc<dyn CommandRunner>) -> Self {
+    pub fn new(runner: Arc<dyn CommandRunner>, reclaimer: Arc<dyn Reclaimer>) -> Self {
         let plugins_dir = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_default()
             .join(".config/omarchy/plugins");
         Self {
             runner,
+            reclaimer,
             plugins_dir,
         }
     }
 
     /// Points the adapter at another plugin directory.
     #[cfg(test)]
-    pub fn with_plugins_dir(runner: Arc<dyn CommandRunner>, plugins_dir: PathBuf) -> Self {
+    pub fn with_plugins_dir(
+        runner: Arc<dyn CommandRunner>,
+        reclaimer: Arc<dyn Reclaimer>,
+        plugins_dir: PathBuf,
+    ) -> Self {
         Self {
             runner,
+            reclaimer,
             plugins_dir,
         }
     }
@@ -295,9 +303,9 @@ impl OmarchyPluginAdapter {
                 source: ComponentSource::OmarchyPlugin { first_party: false },
                 status: ComponentStatus::Orphan,
                 confidence: DetectionConfidence::Low,
-                // Inspection only: no manager owns these, and nothing here deletes by
-                // matching a name.
-                capabilities: vec![ComponentCapability::Inspect],
+                // No manager owns these. They can be moved into quarantine, which keeps
+                // a way back, and that is the only action offered.
+                capabilities: vec![ComponentCapability::Inspect, ComponentCapability::Reclaim],
                 detection: DetectionMethod::scan(&self.plugins_dir).with_note(
                     "not in the Omarchy catalogue; found as a hidden leftover directory",
                 ),
@@ -317,6 +325,107 @@ impl OmarchyPluginAdapter {
         }
         orphans.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
         orphans
+    }
+}
+
+impl OmarchyPluginAdapter {
+    /// A leftover has no manager: the plan states exactly which directory moves and how
+    /// much space that takes out of the plugin root.
+    fn plan_reclaim(
+        &self,
+        request: &OperationRequest,
+        component: &Component,
+    ) -> Result<OperationPlan, AdapterError> {
+        let Some(location) = component.location.clone() else {
+            return Err(AdapterError::Other(format!(
+                "{} has no directory recorded, so nothing can be moved",
+                component.name
+            )));
+        };
+        if location.parent() != Some(self.plugins_dir.as_path()) {
+            return Err(AdapterError::InvalidId {
+                adapter: ADAPTER_ID.to_string(),
+                value: location.display().to_string(),
+                reason: "the directory is not a direct child of the plugin root".to_string(),
+            });
+        }
+        if !location.exists() {
+            return Err(AdapterError::command(
+                "quarantine",
+                location.display().to_string(),
+                "the leftover is no longer there".to_string(),
+            ));
+        }
+
+        let size = crate::domain::path_size(&location);
+        Ok(OperationPlan {
+            adapter: ADAPTER_ID.to_string(),
+            target: request.target.clone(),
+            target_name: component.name.clone(),
+            target_version: None,
+            kind: OperationKind::Reclaim,
+            commands: Vec::new(),
+            reclaim: vec![crate::domain::ReclaimTarget::quarantine(
+                location.clone(),
+                self.plugins_dir.clone(),
+                size,
+            )],
+            affected: vec![location.display().to_string()],
+            blocking: Vec::new(),
+            unknown: vec![
+                "whether anything still refers to this backup is unknown: the plugin catalogue \
+                 hides hidden directories"
+                    .to_string(),
+            ],
+            notes: vec![
+                "the directory is moved into the quarantine area, not deleted, and can be \
+                 restored from there"
+                    .to_string(),
+                "the space is freed only when the quarantine entry is purged, which is a \
+                 separate action"
+                    .to_string(),
+            ],
+        })
+    }
+
+    fn execute_reclaim(&self, plan: &OperationPlan) -> Result<OperationOutcome, AdapterError> {
+        let stamp = crate::infrastructure::reclaim::now_unix();
+        let mut moved = 0usize;
+        let mut freed = 0u64;
+        let mut error_text = String::new();
+
+        for target in &plan.reclaim {
+            match self.reclaimer.quarantine(target, stamp) {
+                Ok(entry) => {
+                    moved += 1;
+                    freed += entry.size;
+                }
+                Err(error) => {
+                    error_text.push_str(&format!("{}: {error}\n", target.path.display()));
+                    break;
+                }
+            }
+        }
+
+        let success = error_text.is_empty() && moved == plan.reclaim.len();
+        Ok(OperationOutcome {
+            success,
+            exit_code: None,
+            command_display: format!("quarantine {} item(s)", plan.reclaim.len()),
+            stdout_tail: String::new(),
+            stderr_tail: error_text,
+            summary: if success {
+                format!(
+                    "moved {moved} leftover(s) totalling {} into quarantine",
+                    crate::domain::format_size(freed)
+                )
+            } else {
+                format!(
+                    "moved {moved} of {} item(s) before stopping",
+                    plan.reclaim.len()
+                )
+            },
+        })
     }
 }
 
@@ -409,6 +518,14 @@ impl ComponentAdapter for OmarchyPluginAdapter {
     /// first-party plugin ships inside the `omarchy` package and would come back on
     /// the next update.
     fn supports(&self, component: &Component, kind: OperationKind) -> bool {
+        if kind == OperationKind::Reclaim {
+            return component.supports(ComponentCapability::Reclaim)
+                && component.status == ComponentStatus::Orphan
+                && component
+                    .location
+                    .as_ref()
+                    .is_some_and(|path| path.parent() == Some(self.plugins_dir.as_path()));
+        }
         kind == OperationKind::Remove
             && component.supports(ComponentCapability::Remove)
             && matches!(
@@ -423,6 +540,9 @@ impl ComponentAdapter for OmarchyPluginAdapter {
         request: &OperationRequest,
         component: &Component,
     ) -> Result<OperationPlan, AdapterError> {
+        if request.kind == OperationKind::Reclaim {
+            return self.plan_reclaim(request, component);
+        }
         if request.kind != OperationKind::Remove {
             return Err(AdapterError::unsupported(ADAPTER_ID, request.kind.label()));
         }
@@ -497,6 +617,7 @@ impl ComponentAdapter for OmarchyPluginAdapter {
                 rationale: "ask Omarchy's own manager to remove the plugin and its directory"
                     .to_string(),
             }],
+            reclaim: Vec::new(),
             affected: vec![format!(
                 "the plugin directory {}",
                 self.plugin_dir(id).display()
@@ -514,6 +635,9 @@ impl ComponentAdapter for OmarchyPluginAdapter {
     }
 
     fn execute(&self, plan: &OperationPlan) -> Result<OperationOutcome, AdapterError> {
+        if plan.kind == OperationKind::Reclaim {
+            return self.execute_reclaim(plan);
+        }
         if plan.adapter != ADAPTER_ID {
             return Err(AdapterError::InvalidId {
                 adapter: ADAPTER_ID.to_string(),
@@ -616,8 +740,14 @@ mod tests {
         }
     }
 
+    fn reclaimer(dir: &Path) -> Arc<dyn Reclaimer> {
+        Arc::new(crate::infrastructure::reclaim::FileReclaimer::new(
+            dir.join(".quarantine-state"),
+        ))
+    }
+
     fn adapter(runner: FakeRunner, dir: &Path) -> OmarchyPluginAdapter {
-        OmarchyPluginAdapter::with_plugins_dir(Arc::new(runner), dir.to_path_buf())
+        OmarchyPluginAdapter::with_plugins_dir(Arc::new(runner), reclaimer(dir), dir.to_path_buf())
     }
 
     fn runner() -> FakeRunner {
@@ -719,7 +849,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_removal_backups_are_listed_as_orphans_and_never_removable() {
+    fn hidden_removal_backups_are_orphans_that_can_be_reclaimed_but_never_removed() {
         let sandbox = Sandbox::new("orphan");
         let components = adapter(runner(), &sandbox.dir).list().expect("list");
         let orphan = components
@@ -729,12 +859,18 @@ mod tests {
 
         assert!(orphan.id.native_id.starts_with(".denon.touchpad.bak."));
         assert_eq!(orphan.name, "denon.touchpad");
-        assert_eq!(orphan.capabilities, vec![ComponentCapability::Inspect]);
+        assert_eq!(
+            orphan.capabilities,
+            vec![ComponentCapability::Inspect, ComponentCapability::Reclaim]
+        );
         assert_eq!(orphan.confidence, DetectionConfidence::Low);
         assert!(orphan.detection.program == "readdir");
 
         let adapter_instance = adapter(runner(), &sandbox.dir);
+        // No manager owns a leftover, so it is never *removed*; it can only be moved into
+        // quarantine, which keeps a way back.
         assert!(!adapter_instance.supports(orphan, OperationKind::Remove));
+        assert!(adapter_instance.supports(orphan, OperationKind::Reclaim));
     }
 
     #[test]
@@ -844,6 +980,7 @@ mod tests {
         let runner = Arc::new(runner);
         let adapter_instance = OmarchyPluginAdapter::with_plugins_dir(
             Arc::clone(&runner) as Arc<dyn CommandRunner>,
+            reclaimer(&sandbox.dir),
             sandbox.dir.clone(),
         );
 
@@ -880,6 +1017,7 @@ mod tests {
         let runner = Arc::new(runner);
         let adapter_instance = OmarchyPluginAdapter::with_plugins_dir(
             Arc::clone(&runner) as Arc<dyn CommandRunner>,
+            reclaimer(&sandbox.dir),
             sandbox.dir.clone(),
         );
         let components = adapter_instance.list().expect("list");
@@ -916,6 +1054,7 @@ mod tests {
                 requires_tty: false,
                 rationale: "tampered".to_string(),
             }],
+            reclaim: Vec::new(),
             affected: Vec::new(),
             blocking: Vec::new(),
             unknown: Vec::new(),

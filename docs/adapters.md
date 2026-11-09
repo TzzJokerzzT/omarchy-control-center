@@ -284,6 +284,8 @@ Two findings from the reference machine shape that work:
 | Neovim plugins | no | the configuration still references them; no manager exists |
 | Zsh plugins | no | writing `.zshrc` would need a diff and an explicit authorisation |
 | Hyprland references | no | a reference is not ownership |
+| Hyprland backup copies | **reclaim** | nobody reads them; they move to quarantine, never to `/dev/null` |
+| Omarchy removal backups | **reclaim** | the catalogue hides them and no manager owns them |
 | systemd services | no | stop, disable and remove are different actions |
 | Python tools | no | the owning environment cannot be proven yet |
 | Fonts and themes | no | shared resources, owned by the distribution or by Omarchy |

@@ -361,6 +361,7 @@ impl ComponentAdapter for AurAdapter {
                     helper.program
                 ),
             }],
+            reclaim: Vec::new(),
             affected,
             blocking,
             unknown,
@@ -678,6 +679,7 @@ mod tests {
                 requires_tty: true,
                 rationale: "tampered".to_string(),
             }],
+            reclaim: Vec::new(),
             affected: Vec::new(),
             blocking: Vec::new(),
             unknown: Vec::new(),

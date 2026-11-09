@@ -65,6 +65,7 @@ impl Args {
 pub enum PlanKindArg {
     Remove,
     Update,
+    Reclaim,
 }
 
 impl From<PlanKindArg> for crate::domain::OperationKind {
@@ -72,6 +73,7 @@ impl From<PlanKindArg> for crate::domain::OperationKind {
         match value {
             PlanKindArg::Remove => Self::Remove,
             PlanKindArg::Update => Self::Update,
+            PlanKindArg::Reclaim => Self::Reclaim,
         }
     }
 }

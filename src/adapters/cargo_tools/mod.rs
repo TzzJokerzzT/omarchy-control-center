@@ -228,6 +228,7 @@ impl ComponentAdapter for CargoToolsAdapter {
                 requires_tty: false,
                 rationale: "remove this crate and the binaries cargo recorded for it".to_string(),
             }],
+            reclaim: Vec::new(),
             affected: tool
                 .extra
                 .iter()

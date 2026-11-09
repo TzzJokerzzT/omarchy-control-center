@@ -16,6 +16,8 @@ use crate::domain::ComponentId;
 pub enum OperationKind {
     Remove,
     Update,
+    /// Freeing the space a leftover occupies by moving it into quarantine.
+    Reclaim,
 }
 
 impl OperationKind {
@@ -23,6 +25,7 @@ impl OperationKind {
         match self {
             Self::Remove => "remove",
             Self::Update => "update",
+            Self::Reclaim => "reclaim",
         }
     }
 }
@@ -72,6 +75,9 @@ pub struct OperationPlan {
     pub target_version: Option<String>,
     pub kind: OperationKind,
     pub commands: Vec<PlannedCommand>,
+    /// Paths a reclaim would move. Empty for every other kind of operation.
+    #[serde(default)]
+    pub reclaim: Vec<crate::domain::ReclaimTarget>,
     /// Components that could be affected beyond the target itself.
     pub affected: Vec<String>,
     /// Reasons the operation must not run. Never executed while non-empty.
@@ -83,7 +89,18 @@ pub struct OperationPlan {
 
 impl OperationPlan {
     pub fn is_executable(&self) -> bool {
-        self.blocking.is_empty() && !self.commands.is_empty()
+        if !self.blocking.is_empty() {
+            return false;
+        }
+        match self.kind {
+            OperationKind::Reclaim => !self.reclaim.is_empty() && self.commands.is_empty(),
+            _ => !self.commands.is_empty(),
+        }
+    }
+
+    /// Total bytes the reclaim would take out of its original location.
+    pub fn reclaim_size(&self) -> u64 {
+        self.reclaim.iter().map(|target| target.size).sum()
     }
 
     pub fn requires_tty(&self) -> bool {
@@ -107,6 +124,11 @@ impl OperationPlan {
         for command in &self.commands {
             parts.push(command.program.clone());
             parts.extend(command.args.iter().cloned());
+        }
+        for target in &self.reclaim {
+            parts.push(target.path.display().to_string());
+            parts.push(target.root.display().to_string());
+            parts.push(target.size.to_string());
         }
         let mut affected = self.affected.clone();
         affected.sort();
@@ -168,6 +190,7 @@ mod tests {
             target_version: Some("1.4.0-1".to_string()),
             kind: OperationKind::Remove,
             commands: vec![command(&["-R", "btop"])],
+            reclaim: Vec::new(),
             affected,
             blocking,
             unknown: Vec::new(),

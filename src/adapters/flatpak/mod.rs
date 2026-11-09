@@ -415,6 +415,12 @@ impl ComponentAdapter for FlatpakAdapter {
                 );
                 notes.push("the operation is not reversible".to_string());
             }
+            OperationKind::Reclaim => {
+                return Err(AdapterError::unsupported(
+                    ADAPTER_ID,
+                    "reclaim (flatpak owns its store; every entry is removable through it)",
+                ));
+            }
             OperationKind::Update => {
                 affected.push("the files of this reference only".to_string());
                 unknown.push(
@@ -436,6 +442,7 @@ impl ComponentAdapter for FlatpakAdapter {
                 "--no-related".to_string(),
                 reference.clone(),
             ],
+            OperationKind::Reclaim => Vec::new(),
             OperationKind::Update => vec![
                 "update".to_string(),
                 scope_flag.to_string(),
@@ -461,6 +468,7 @@ impl ComponentAdapter for FlatpakAdapter {
                     scope.label()
                 ),
             }],
+            reclaim: Vec::new(),
             affected,
             blocking: Vec::new(),
             unknown,
@@ -935,6 +943,7 @@ mod tests {
                 requires_tty: false,
                 rationale: "remove".to_string(),
             }],
+            reclaim: Vec::new(),
             affected: Vec::new(),
             blocking: Vec::new(),
             unknown: Vec::new(),

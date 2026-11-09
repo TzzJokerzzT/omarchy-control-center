@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "tzzjokerzzt.omarchy-control-center",
+  "name": "Omarchy Control Center",
+  "version": "1.0.0",
+  "author": "Alexis Buelvas Madera",
+  "license": "MIT",
+  "description": "Bar button that opens the Omarchy Control Center TUI, or its installation instructions when it is not installed yet.",
+  "homepage": "https://github.com/TzzJokerzzT/omarchy-control-center",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Control Center",
+    "description": "Opens the Omarchy Control Center inventory: packages, plugins, services, fonts and the rest of what is installed.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

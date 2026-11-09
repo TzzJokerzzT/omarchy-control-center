@@ -365,6 +365,9 @@ pub enum ComponentCapability {
     Inspect,
     Update,
     Remove,
+    /// Reclaim the space an unmanaged leftover occupies. Never a system package: those
+    /// are removed through the manager that owns them.
+    Reclaim,
 }
 
 impl ComponentCapability {
@@ -373,6 +376,7 @@ impl ComponentCapability {
             Self::Inspect => "Inspect",
             Self::Update => "Update",
             Self::Remove => "Remove",
+            Self::Reclaim => "Reclaim",
         }
     }
 }

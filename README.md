@@ -86,6 +86,8 @@ omarchy-control-center --print-plan some-aur-package
 | `d` | preview a removal (only when the adapter supports it) |
 | `u` | preview an update (flatpak only — see limitations) |
 | `H` | operation history |
+| `C` | cleanup: leftovers that can be moved into quarantine |
+| `V` | quarantine: restore what was moved, or purge it for good |
 | `a` | adapter status and per-adapter issues |
 | `?` | help, including what every state means |
 | `q`, `Q`, `Esc` | quit; never interrupted while a command is running |
@@ -107,6 +109,53 @@ omarchy-control-center --print-plan some-aur-package
   missing tool or a panicking integration never stops the others.
 * **No invented facts.** Absent values render as `No disponible`, and every component
   names the exact command that detected it.
+
+## Cleaning up leftovers (`C`)
+
+Orphans are not one thing, and the difference decides what may happen to them.
+
+| Kind | What this program does |
+| --- | --- |
+| A leftover directory or file nobody owns — a plugin removal backup, a Hyprland `*.bak` copy | **Moved into quarantine.** You get a preview with the exact paths and the total size, then a phrase to type. It can be restored. |
+| A package the package manager no longer needs (AUR / pacman orphan) | **Not in the cleanup list.** It appears in the inventory with the `orphan` state and is removed through the manager that owns it, one package at a time. |
+| A systemd service | Inspection only. Stopping, disabling and removing are three different actions. |
+
+On the reference machine the cleanup screen finds 62 leftovers (1.4 MiB): 23 plugin
+removal backups that `omarchy plugin list` hides and 39 Hyprland backup copies.
+
+Two steps, on purpose:
+
+1. **Quarantine** (`C`, select, `Enter`) moves the item to
+   `~/.local/state/omarchy-control-center/quarantine/<stamp>/` and records the original
+   path in a ledger. Restore it from `V`. Nothing is deleted, and the space is not free
+   yet.
+2. **Purge** (`V`, `p`, type the exact phrase) deletes a quarantined entry for good. It
+   only accepts what the ledger recorded, so it can never be pointed at an arbitrary
+   path.
+
+Why not one "delete all orphans" button: a path is verified before it moves (direct child
+of a root the adapter owns, canonicalised, never a symlink, size unchanged since the
+preview), and a bulk delete would throw that away for the one case that matters.
+
+## Omarchy bar widget
+
+`omarchy-plugin/` contains a real Omarchy shell plugin: a bar button that opens the
+control center, or the installation instructions when the binary is not on `PATH`.
+
+```sh
+# validate it with Omarchy's own validator, then install it
+omarchy plugin validate omarchy-plugin
+cp -r omarchy-plugin ~/.config/omarchy/plugins/tzzjokerzzt.omarchy-control-center
+omarchy plugin enable tzzjokerzzt.omarchy-control-center
+```
+
+Left click opens the inventory in a terminal, right click reuses an open window, and an
+uninstalled binary opens the *Build and run* section of this README in the browser.
+
+Note: `omarchy plugin add <git-url>` clones a repository whose **root** is the plugin, so
+it cannot install from a subfolder of this project. Copying the folder is the honest
+instruction until the widget lives in its own repository — see
+[`docs/roadmap.md`](docs/roadmap.md).
 
 ## Configuration
 
@@ -131,6 +180,7 @@ or configuration content.
 * [`docs/architecture.md`](docs/architecture.md) — layers, adapter contract, operation lifecycle.
 * [`docs/adapters.md`](docs/adapters.md) — every adapter, every command it runs and why.
 * [`docs/security.md`](docs/security.md) — threat model, privilege handling, and the automated tests behind each guarantee.
+* [`docs/roadmap.md`](docs/roadmap.md) — every deferred item, with its blocker.
 
 ## Development
 
@@ -147,6 +197,9 @@ removes or upgrades a package.
 
 These are real, and the program does not pretend otherwise.
 
+* **Cleanup moves things; it does not delete them.** Freeing the space takes a second,
+  explicit purge step, and that is the only step that deletes anything this program did
+  not create.
 * **Removal is offered for four ecosystems only** — pacman, the AUR helper, Omarchy
   plugins and Cargo — because those have a manager that owns the files. Everything else
   is inspection: deleting a plugin directory or a font because a name matched is exactly

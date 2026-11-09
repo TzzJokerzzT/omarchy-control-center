@@ -345,6 +345,7 @@ mod tests {
                     requires_tty: true,
                     rationale: "remove the package".to_string(),
                 }],
+                reclaim: Vec::new(),
                 affected: (0..dependents)
                     .map(|index| format!("dependent-{index}"))
                     .collect(),

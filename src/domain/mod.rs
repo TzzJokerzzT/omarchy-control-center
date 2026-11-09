@@ -4,6 +4,7 @@ mod adapter;
 mod component;
 mod error;
 mod operation;
+mod reclaim;
 
 pub use adapter::{AdapterAvailability, AdapterStatus, ComponentAdapter};
 pub use component::{
@@ -15,3 +16,4 @@ pub use error::AdapterError;
 pub use operation::{
     OperationKind, OperationOutcome, OperationPlan, OperationRequest, PlannedCommand, tail_text,
 };
+pub use reclaim::{Quarantined, ReclaimError, ReclaimTarget, path_size};
