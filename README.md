@@ -316,10 +316,14 @@ Six palettes ship with the program, plus a `default` that keeps your terminal's 
 | `cviper` | C. Viper — charcoal suit, white shirt, an orange that hits |
 
 Press `t` to open the selector: `↑`/`↓` previews, `Enter` applies and remembers, `Esc` keeps
-the previous one. The selector also shows the id to write into your configuration.
+the previous one, and **`c` starts your own theme** — it writes a ready-to-edit file seeded
+from the highlighted palette into `~/.config/omarchy-control-center/themes/`, and the new
+theme appears in the list straight away. The selector also shows the id to write into your
+configuration.
 
 **Your own theme** is a small TOML file in
-`~/.config/omarchy-control-center/themes/`; the file name is the id:
+`~/.config/omarchy-control-center/themes/` (press `c` in the selector to get a starter file);
+the file name is the id:
 
 ```toml
 # ~/.config/omarchy-control-center/themes/sunset.toml
