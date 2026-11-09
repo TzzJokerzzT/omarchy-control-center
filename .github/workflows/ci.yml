@@ -35,6 +35,12 @@ jobs:
           rustc --version
           cargo --version
 
+      # A release commit once bumped Cargo.toml and forgot Cargo.lock, so the release's
+      # `--locked` build failed at Build and the tag published nothing. Catching it here turns
+      # that into a red check on the pull request instead of a broken release.
+      - name: Lockfile matches Cargo.toml
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
       - name: Formatting
         run: cargo fmt --check
 

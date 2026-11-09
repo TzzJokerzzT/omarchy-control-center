@@ -706,6 +706,22 @@ mod tests {
         );
     }
 
+    /// The v0.3.0 release commit bumped `Cargo.toml` and forgot `Cargo.lock`, so the release's
+    /// `--locked` build failed and nothing was published. Both halves are needed: CI has to
+    /// report a stale lock on the way in, and the release has to refuse to publish one.
+    #[test]
+    fn both_workflows_refuse_a_stale_lockfile() {
+        const CI_WORKFLOW: &str = include_str!("../../.github/workflows/ci.yml");
+        assert!(
+            CI_WORKFLOW.contains("cargo metadata --locked"),
+            "ci.yml never fails on a stale Cargo.lock, so a release commit can forget it unseen"
+        );
+        assert!(
+            RELEASE_WORKFLOW.contains("cargo build --release --locked"),
+            "the release must refuse a lockfile that no longer matches Cargo.toml"
+        );
+    }
+
     fn api_args(url: &str) -> String {
         format!("--fail --silent --show-error --location --max-time 10 --proto =https {url}")
     }
