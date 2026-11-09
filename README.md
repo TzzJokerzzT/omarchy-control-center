@@ -38,6 +38,7 @@ they cannot drift from the code. Regenerate with
 | `cargo` | the Cargo tools adapter | removal goes through `cargo uninstall` |
 | `uv` or `pipx` | the Python tools adapter | a lazy-install shim is refused, never executed |
 | `fc-list` | the resources adapter | fonts; themes and icons are read from their roots |
+| `curl` + `sha256sum` | updating the program itself | only for `--check-update` and `--update`; a missing one is reported, never worked around |
 
 Not implemented, and reported as such rather than simulated: AppImage candidates,
 inventory comparison between runs, and mutation of anything under `~/.config`
@@ -187,6 +188,26 @@ omarchy-control-center --print-plan btop
 omarchy-control-center --print-plan some-aur-package
 ```
 
+## Command line
+
+Everything the interface can show has a headless equivalent, and none of these flags needs a
+terminal.
+
+| Flag | What it does |
+| --- | --- |
+| `--read-only` | explore, with no destructive action exposed at all |
+| `--print-inventory` | the whole inventory as JSON, then exit |
+| `--print-inventory --adapter ID` | restrict that export to one adapter (see [`docs/adapters.md`](docs/adapters.md) for the ids) |
+| `--print-plan ID` | the plan a removal would run — exact argv, affected, blocking, unknown — and exit. Never runs it |
+| `--print-plan ID --kind KIND` | plan an `update` or a `reclaim` (quarantine) instead of a `remove` |
+| `--check-update` | is there a newer release? One line; reads the network only |
+| `--update --yes` | download, verify and install the newest release (see [Updates](#updates)) |
+| `--config FILE` | use this configuration instead of the XDG location |
+| `--log-level LEVEL` | `error`, `warn`, `info`, `debug` or `trace`, for the log file |
+| `--extra-search-path DIR` | look for tools in `DIR` first, before the inherited `PATH` |
+| `--yes` | answer a confirmation that would otherwise be asked |
+| `--version`, `--help` | the version you are running; the full surface |
+
 ## Keyboard
 
 | Key | Action |
@@ -269,10 +290,13 @@ instruction until the widget lives in its own repository — see
 
 ## Updates
 
-Two commands, and neither of them installs anything on its own:
+Releases are published on this project's
+[GitHub releases page](https://github.com/TzzJokerzzT/omarchy-control-center/releases), and
+nothing is installed that cannot be verified first.
 
 ```sh
-control-center --check-update     # one line: is there a newer release? reads only
+control-center --version          # what you are running
+control-center --check-update     # is there something newer? one line, reads only
 control-center --update --yes     # download, verify, swap the binary
 ```
 
@@ -282,25 +306,59 @@ byte touches the installed binary. Downloaded content is never executed — the 
 written next to the current one and swapped in with an atomic rename, and it takes effect
 the next time you start it.
 
-The interface can tell you too, but only if you ask for it:
+It stops, and says why, when:
+
+| Situation | What you see |
+| --- | --- |
+| the release publishes no `SHA256SUMS` | that the download cannot be verified |
+| the release publishes no binary for your platform | the assets it *did* publish, listed |
+| the hash does not match | both hashes — and the installed binary is left byte-for-byte as it was |
+| `curl` or `sha256sum` is missing | the missing tool, named; nothing is guessed or worked around |
+| you are already on the newest release | `vX.Y.Z is already the newest release; nothing to do` |
+
+Requirements and limits:
+
+* The API is GitHub's, read with `curl` over HTTPS only (`--proto =https`), with a deadline on
+  every request.
+* Only the published `x86_64-linux` binary is offered. Another architecture gets that refusal,
+  not a substitute.
+* Release candidates (`v0.4.0-rc1`) are published as prereleases, and the check never offers
+  them: it answers with the newest release that is not one.
+* `--update` replaces the file it is running from, so the new version is in place after the
+  swap; it never re-executes it for you.
+
+### Being told without asking the command line
+
+The interface can show it too, but only if you ask for it:
 
 ```toml
 # ~/.config/omarchy-control-center/config.toml
 check_for_updates = true
 ```
 
-With that on, the program reads the release API once at startup, in the background, and shows
-`↑ vX.Y.Z` in the header when a newer version exists. It never installs anything from there
-and a failed check goes to the log, not to your screen. Off by default: a program that
-contacts a server should be asked to, not assumed to.
+With that on, the program reads the release API once at startup, in a background thread, and
+shows `↑ vX.Y.Z` in the header when a newer version exists. It never installs anything from
+there, and a failed check goes to the log instead of your screen. Off by default: a program
+that contacts a server should be asked to, not assumed to.
 
-Requirements and limits:
+### If a package manager owns the binary
 
-* `curl` is used for the two reads; without it the check reports that it cannot run.
-* The API is GitHub's, over HTTPS only (`--proto =https`), with a deadline on every request.
-* Only the published `x86_64-linux` binary is offered. Anything else is reported, not guessed.
-* Nothing is published for the current version yet: the release workflow runs when a `v*` tag
-  is pushed, and until then `--check-update` has nothing to compare against.
+`--update` replaces **the file the program is running from**. If you installed it with
+`install.sh` (or by hand into `~/.local/bin`), that file is yours and the swap is clean.
+
+If you ever install it as a distribution package, do not point `--update` at it: you would
+overwrite a file the package manager believes it owns, and the next upgrade would collide with
+it. Use `--check-update` to learn that a new version exists, and update it the way you installed
+it. `control-center --version` plus your package manager's records tell you which case you are in.
+
+Re-running `./install.sh` is always a valid update too: it rebuilds, reinstalls and verifies the
+binary, and the `PATH` block is only ever written once.
+
+### Where the download goes
+
+A downloaded binary waits in `~/.local/state/omarchy-control-center/update/` and is removed after
+the swap or after a checksum mismatch. An interrupted download can leave a partial file there;
+it is never executed, and the next `--update` overwrites it.
 
 ## Themes
 
@@ -359,6 +417,7 @@ typo never prevents the inventory from opening.
 | `~/.config/omarchy-control-center/config.toml` | your configuration (only if you create it) | — |
 | `~/.local/state/omarchy-control-center/occ.log` | diagnostic log: commands, exit codes, errors | `0600` |
 | `~/.local/state/omarchy-control-center/history.jsonl` | one line per executed operation | `0600` |
+| `~/.local/state/omarchy-control-center/update/` | a downloaded release while `--update` runs | `0755` |
 
 The history stores timestamp, adapter, component, operation, result, exit code,
 command and error summary. It never stores passwords, tokens, environment variables
@@ -389,7 +448,7 @@ means only the maintainer can approve and merge them. Issues are open to everyon
 ```sh
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test          # 137 tests, no system modification, no root
+cargo test          # 287 tests, no system modification, no root
 ```
 
 Tests use fake executables and canned command output; nothing in the suite installs,
@@ -406,9 +465,10 @@ These are real, and the program does not pretend otherwise.
   plugins and Cargo — because those have a manager that owns the files. Everything else
   is inspection: deleting a plugin directory or a font because a name matched is exactly
   what this program refuses to do.
-* **Updates are only offered for flatpak.** Arch does not support partial upgrades, so
-  a per-package update would be a lie; a whole-system upgrade is a different operation
-  with different consent, and is not in this version.
+* **Component updates are only offered for flatpak.** Arch does not support partial
+  upgrades, so a per-package update would be a lie; a whole-system upgrade is a different
+  operation with different consent, and is not in this version. The program can update
+  **itself** — see [Updates](#updates) — which is a different thing entirely.
 * **Removals never cascade.** If anything requires a package, the operation is blocked
   and the dependents are listed. `-Rns`, `-Rdd` and orphan batches are not offered.
 * **The interface waits during a privileged command.** A removal hands the terminal to
