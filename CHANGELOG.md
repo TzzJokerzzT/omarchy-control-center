@@ -4,7 +4,7 @@ Every notable change, grouped by kind. This project follows [Semantic
 Versioning](https://semver.org/): the version lives in `Cargo.toml`, the tag is `vX.Y.Z`,
 and the rules for bumping it are in [`docs/versioning.md`](docs/versioning.md).
 
-## [Unreleased]
+## [0.3.0] — update checks, verified updates and release workflow
 
 ### Added
 
