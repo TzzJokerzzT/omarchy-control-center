@@ -267,5 +267,5 @@
   <text x="308" y="467" fill="#e8e6ff" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">none                                                                  │</text>
   <text x="12" y="484" fill="#6b5f9c" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">└──────────────────────┘</text>
   <text x="204" y="484" fill="#e8e6ff" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">└──────────────────────────────────────────────────────────────────────────────────┘</text>
-  <text x="12" y="518" fill="#6b5f9c" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve"> [↑↓] move  [Enter] details  [/] search  [d] remove  [C] cleanup  [V] quarantine  [?] help</text>
+  <text x="12" y="518" fill="#6b5f9c" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve"> [↑↓] move [Enter] details [/] search [d] remove [t] theme [C] cleanup [V] quarantine [?] help</text>
 </svg>

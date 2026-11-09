@@ -23,6 +23,9 @@ apply and remember it, `Esc` to keep the previous one.
 `default` paints no background on purpose: with it, the program looks like the rest of your
 terminal. Every other theme paints its own.
 
+Press `c` in the selector to copy the highlighted palette into a file you can edit: `ton` is
+how a theme gets made without memorising hex values first.
+
 ## Choosing a theme without the selector
 
 The choice made in the selector is stored in
@@ -45,9 +48,15 @@ not destroy them.
 
 ## Writing your own
 
-Drop a `.toml` file into `~/.config/omarchy-control-center/themes/`. The **file name is the
-theme id**, so `sunset.toml` becomes `theme = "sunset"`. It appears in the selector
-immediately.
+Two ways in, and they end in the same place.
+
+**From the app.** Open the selector with `t`, move to the palette you want to start from, and
+press `c`. It writes `custom.toml` into `~/.config/omarchy-control-center/themes/` seeded with
+that palette's colours, and the theme appears in the list immediately. Edit the file, save,
+press `t` again. A second `c` writes `custom-2.toml` — an existing file is never overwritten.
+
+**By hand.** Drop a `.toml` file into the same directory. The **file name is the theme id**, so
+`sunset.toml` becomes `theme = "sunset"`.
 
 ```toml
 # ~/.config/omarchy-control-center/themes/sunset.toml

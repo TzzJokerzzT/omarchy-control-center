@@ -285,7 +285,7 @@
   <text x="12" y="433" fill="#66d9ef" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
   <text x="868" y="433" fill="#66d9ef" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
   <text x="12" y="450" fill="#66d9ef" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
-  <text x="20" y="450" fill="#75715e" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">Drop your own theme into your theme directory as a .toml file.</text>
+  <text x="20" y="450" fill="#75715e" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">Press c to start your own from this palette (writes into your theme directory).</text>
   <text x="868" y="450" fill="#66d9ef" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
   <text x="12" y="467" fill="#66d9ef" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
   <text x="868" y="467" fill="#66d9ef" font-family="'JetBrains Mono','Fira Code',monospace" font-size="13" xml:space="preserve">│</text>
