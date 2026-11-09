@@ -279,6 +279,9 @@ or configuration content.
 * [`docs/security.md`](docs/security.md) — threat model, privilege handling, and the automated tests behind each guarantee.
 * [`docs/roadmap.md`](docs/roadmap.md) — every deferred item, with its blocker.
 * [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to report a problem and how a change gets merged.
+* [`docs/maintenance.md`](docs/maintenance.md) — what lives where, how the branch rules are
+  re-applied (`scripts/protect-main.sh`), and what survives deleting the clone or the
+  repository.
 
 ## Contributing
 
