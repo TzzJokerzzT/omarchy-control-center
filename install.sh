@@ -21,6 +21,9 @@ MARK_BEGIN="# >>> omarchy-control-center >>>"
 MARK_END="# <<< omarchy-control-center <<<"
 
 PREFIX="${XDG_BIN_HOME:-$HOME/.local/bin}"
+# Respect CARGO_TARGET_DIR: someone who sets it builds somewhere else, and the installer
+# must look where the build actually landed instead of assuming ./target.
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 PLUGIN=ask
 DRY_RUN=0
 UNINSTALL=0
@@ -36,7 +39,8 @@ Usage:
   ./install.sh [options]
 
 Options:
-  --prefix DIR      Where to put the binary (default: $XDG_BIN_HOME or ~/.local/bin)
+  --prefix DIR      Where to put the binary (default: $XDG_BIN_HOME or ~/.local/bin).
+                    The build is read from $CARGO_TARGET_DIR, or ./target
   --path            Add the prefix to your shell configuration without asking
   --no-path         Never touch your shell configuration
   --plugin          Also install the Omarchy bar widget
@@ -284,7 +288,7 @@ do_install() {
 
   step "Installing into $PREFIX"
   run mkdir -p "$PREFIX"
-  run install -m 755 target/release/"$BIN_NAME" "$PREFIX/$BIN_NAME"
+  run install -m 755 "$TARGET_DIR/release/$BIN_NAME" "$PREFIX/$BIN_NAME"
 
   step "Verifying the installed binary"
   if [ "$DRY_RUN" = 1 ]; then

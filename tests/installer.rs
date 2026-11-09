@@ -4,6 +4,10 @@
 //! script's own logic — paths, the short-name link, the marked PATH block, the uninstall —
 //! is exercised in milliseconds against a scratch HOME. That keeps the suite fast and
 //! still proves the behaviour a user depends on.
+//!
+//! Everything the script touches is redirected into the sandbox, including
+//! `CARGO_TARGET_DIR`: an earlier version of this file let the stub write into the
+//! repository's own `target/release/`, which would have installed a fake binary.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -28,11 +32,15 @@ impl Sandbox {
         )
         .expect("zshrc");
 
-        // A `cargo` that pretends to build: it just leaves a runnable binary behind.
+        // A `cargo` that pretends to build: it leaves a runnable binary in the directory
+        // the installer was told to read from.
         sandbox_tool(
             &dir,
             "cargo",
-            "mkdir -p target/release\nprintf '#!/bin/sh\\necho omarchy-control-center 0.1.0\\n' > target/release/omarchy-control-center\nchmod +x target/release/omarchy-control-center\n",
+            "dir=\"${CARGO_TARGET_DIR:-target}/release\"\n\
+             mkdir -p \"$dir\"\n\
+             printf '#!/bin/sh\\necho omarchy-control-center 0.1.0\\n' > \"$dir/omarchy-control-center\"\n\
+             chmod +x \"$dir/omarchy-control-center\"\n",
         );
         sandbox_tool(&dir, "rustc", "printf 'rustc 1.99.1\\n'\n");
         Self { dir }
@@ -69,6 +77,8 @@ impl Sandbox {
             .env("PATH", path)
             .env("HOME", self.home())
             .env("SHELL", "/bin/zsh")
+            // The build lands in the sandbox, never in the repository.
+            .env("CARGO_TARGET_DIR", self.dir.join("target"))
             .env("XDG_CONFIG_HOME", self.dir.join("config"))
             .env("XDG_STATE_HOME", self.dir.join("state"))
             .env_remove("XDG_BIN_HOME");
@@ -196,6 +206,26 @@ fn installing_creates_the_program_and_the_short_name_that_runs_from_anywhere() {
         text(&run)
     );
     assert!(text(&run).contains("omarchy-control-center"));
+}
+
+#[test]
+fn the_build_is_read_from_cargo_target_dir_not_from_a_hardcoded_path() {
+    // Someone who sets CARGO_TARGET_DIR builds outside ./target. The installer must follow,
+    // or it reports a successful build and then installs nothing.
+    let sandbox = Sandbox::new("target-dir");
+    let output = sandbox.run(&["--no-plugin", "--no-path"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        sandbox.prefix().join("omarchy-control-center").is_file(),
+        "the binary was read from the wrong build directory"
+    );
+    assert!(
+        sandbox
+            .dir
+            .join("target/release/omarchy-control-center")
+            .is_file(),
+        "the sandbox build directory was not used"
+    );
 }
 
 #[test]
