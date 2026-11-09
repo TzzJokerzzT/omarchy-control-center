@@ -290,6 +290,12 @@ Two findings from the reference machine shape that work:
 | Python tools | no | the owning environment cannot be proven yet |
 | Fonts and themes | no | shared resources, owned by the distribution or by Omarchy |
 
+## Installing this project
+
+`./install.sh` builds and installs the binary, verifies it runs, and can add the Omarchy
+bar widget. `./install.sh --uninstall` reverses it and keeps your data unless you pass
+`--purge-state`. See the README for the full option list and the manual equivalent.
+
 ## Adding an adapter
 
 1. Create `src/adapters/<id>/mod.rs` implementing `ComponentAdapter`.

@@ -40,9 +40,11 @@ promise: each line names its blocker, because an item without one is just a wish
 | Item | Why it is not done | What it needs |
 | --- | --- | --- |
 | CI workflow | Not added yet | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` on push |
-| AUR package | The project is not packaged | A `PKGBUILD` building from the tagged source |
+| AUR package | The project is not packaged | A `PKGBUILD` building from the tagged source; `install.sh` covers the source install in the meantime |
 | `omarchy plugin add <url>` for the widget | The manager clones a repository whose **root** is the plugin; ours is a subfolder of a Rust project | A separate plugin repository, or a root manifest (which would pollute the crate) |
 | Release artifacts | No tags yet | Version tags, checksums, and a changelog |
+| Shell completions | `install.sh` installs the binary and the widget, nothing else | Generated completions per shell, installed next to the binary |
+| Uninstall from the interface | The installer undoes an install; the program cannot uninstall itself | Needs a decision about what "uninstall" means while the program is running |
 
 ## Quality
 

@@ -51,7 +51,81 @@ On the machine this was developed on that is 2666 components, 0 failures and 0 d
 identities, including 3 Neovim plugins reported as `missing` because the lock file lists
 them and no directory exists.
 
+## Install
+
+One command, no root, nothing outside your home:
+
+```sh
+git clone https://github.com/TzzJokerzzT/omarchy-control-center.git
+cd omarchy-control-center
+./install.sh
+```
+
+It builds the release binary, installs it into `$XDG_BIN_HOME` (or `~/.local/bin`),
+verifies the installed binary runs, and offers to add the Omarchy bar widget. Every step
+is printed before it happens; `--dry-run` prints the whole plan and changes nothing.
+
+```sh
+./install.sh --dry-run        # show every step, touch nothing
+./install.sh --no-plugin      # binary only
+./install.sh --plugin         # binary plus the Omarchy bar widget, no question asked
+./install.sh --prefix DIR     # install somewhere else
+./install.sh --help           # all options
+```
+
+Requirements: `cargo` and `rustc` (Rust 1.88+; on Arch: `sudo pacman -S --needed rust`).
+An Arch-based system is not required, but the pacman, AUR and Omarchy adapters report
+themselves unavailable elsewhere.
+
+| What the installer writes | Where |
+| --- | --- |
+| the program | `<prefix>/omarchy-control-center` |
+| the bar widget (optional) | `~/.config/omarchy/plugins/tzzjokerzzt.omarchy-control-center/` |
+
+The widget is copied only after Omarchy's own validator accepts it, and it is enabled
+with `omarchy plugin enable` so the shell state stays consistent.
+
+### Manual install
+
+If you would rather not run a script:
+
+```sh
+cargo build --release --locked
+install -Dm755 target/release/omarchy-control-center ~/.local/bin/omarchy-control-center
+
+# optional bar widget
+omarchy plugin validate omarchy-plugin
+cp -r omarchy-plugin ~/.config/omarchy/plugins/tzzjokerzzt.omarchy-control-center
+omarchy plugin enable tzzjokerzzt.omarchy-control-center
+```
+
+## Uninstall
+
+```sh
+./install.sh --uninstall              # remove the program and the widget
+./install.sh --uninstall --purge-state  # …and your configuration, history and quarantine
+```
+
+By default an uninstall **keeps your data**, and says where it is:
+
+| Path | Contents |
+| --- | --- |
+| `~/.config/omarchy-control-center/config.toml` | your configuration |
+| `~/.local/state/omarchy-control-center/occ.log` | diagnostic log |
+| `~/.local/state/omarchy-control-center/history.jsonl` | every operation you ran |
+| `~/.local/state/omarchy-control-center/quarantine/` | files moved out of the way by a cleanup |
+
+`--purge-state` deletes those too, after warning that quarantined files are the only
+copy left: the cleanup screen moves things there instead of deleting them, so removing
+that directory is the step that makes them unrecoverable. It asks before doing it;
+`--yes` skips the question for scripted use.
+
+The widget is removed through `omarchy plugin remove`, so the shell's own bookkeeping is
+updated instead of a directory being deleted behind its back.
+
 ## Build and run
+
+Building from source without installing anything:
 
 ```sh
 cargo build --release
@@ -143,10 +217,7 @@ preview), and a bulk delete would throw that away for the one case that matters.
 control center, or the installation instructions when the binary is not on `PATH`.
 
 ```sh
-# validate it with Omarchy's own validator, then install it
-omarchy plugin validate omarchy-plugin
-cp -r omarchy-plugin ~/.config/omarchy/plugins/tzzjokerzzt.omarchy-control-center
-omarchy plugin enable tzzjokerzzt.omarchy-control-center
+./install.sh --plugin    # validates, copies and enables the widget
 ```
 
 Left click opens the inventory in a terminal, right click reuses an open window, and an
