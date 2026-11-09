@@ -278,6 +278,13 @@ or configuration content.
 * [`docs/adapters.md`](docs/adapters.md) — every adapter, every command it runs and why.
 * [`docs/security.md`](docs/security.md) — threat model, privilege handling, and the automated tests behind each guarantee.
 * [`docs/roadmap.md`](docs/roadmap.md) — every deferred item, with its blocker.
+* [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to report a problem and how a change gets merged.
+
+## Contributing
+
+`main` is protected: changes arrive as pull requests from a fork, and a CODEOWNERS rule
+means only the maintainer can approve and merge them. Issues are open to everyone. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the flow and the rules a change must respect.
 
 ## Development
 
