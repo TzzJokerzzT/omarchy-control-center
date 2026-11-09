@@ -35,6 +35,7 @@ pub enum Screen {
     Plan,
     Cleanup,
     CleanupConfirm,
+    CleanupResult,
     Quarantine,
     Result,
     History,
@@ -64,6 +65,15 @@ pub enum CleanupAction {
     Quarantine,
     /// Delete quarantine entries for good.
     Purge,
+}
+
+/// What a finished cleanup did. Rendered as a modal with the numbers, because a
+/// one-line status is easy to miss and this action moves real files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanupReport {
+    pub success: bool,
+    pub headline: String,
+    pub lines: Vec<String>,
 }
 
 /// A cleanup waiting for its phrase.
@@ -100,6 +110,11 @@ pub struct UiState {
     pub quarantine_index: usize,
     pub pending_cleanup: Option<PendingCleanup>,
     pub cleanup_input: String,
+    /// Bytes per leftover, measured when the view opens. The draw loop never walks the
+    /// filesystem: it reads this map.
+    pub reclaim_sizes: std::collections::BTreeMap<crate::domain::ComponentId, u64>,
+    /// What the last cleanup did, shown as a modal so it cannot be missed.
+    pub cleanup_report: Option<CleanupReport>,
     pub plan_input: String,
     pub last_record: Option<OperationRecord>,
     /// Extra facts for the open detail view, with the component they belong to.
@@ -148,6 +163,8 @@ impl UiState {
             quarantine_index: 0,
             pending_cleanup: None,
             cleanup_input: String::new(),
+            reclaim_sizes: std::collections::BTreeMap::new(),
+            cleanup_report: None,
             plan_input: String::new(),
             last_record: None,
             enrichment: None,
@@ -236,6 +253,7 @@ impl UiState {
                 self.loading = false;
                 self.snapshot = *snapshot;
                 self.clamp_selection();
+                self.measure_leftovers();
                 if self.snapshot.components.is_empty() && self.snapshot.failure_count() > 0 {
                     self.status_line =
                         "no component could be loaded: open the adapters view (a)".to_string();
@@ -300,11 +318,31 @@ impl UiState {
             .collect()
     }
 
+    pub fn size_of(&self, component: &Component) -> u64 {
+        self.reclaim_sizes.get(&component.id).copied().unwrap_or(0)
+    }
+
+    /// Measures every leftover once. Called when the cleanup view opens and after a
+    /// reload, never from the render path.
+    pub fn measure_leftovers(&mut self) {
+        self.reclaim_sizes.clear();
+        for component in self.snapshot.components.iter() {
+            if !component.supports(crate::domain::ComponentCapability::Reclaim) {
+                continue;
+            }
+            let size = component
+                .location
+                .as_ref()
+                .map(|path| crate::domain::path_size(path))
+                .unwrap_or(0);
+            self.reclaim_sizes.insert(component.id.clone(), size);
+        }
+    }
+
     pub fn reclaimable_total(&self) -> u64 {
         self.reclaimable()
             .iter()
-            .filter_map(|component| component.location.as_ref())
-            .map(|path| crate::domain::path_size(path))
+            .map(|component| self.size_of(component))
             .sum()
     }
 
@@ -312,8 +350,7 @@ impl UiState {
         self.reclaimable()
             .iter()
             .filter(|component| self.cleanup_selected.contains(&component.id))
-            .filter_map(|component| component.location.as_ref())
-            .map(|path| crate::domain::path_size(path))
+            .map(|component| self.size_of(component))
             .sum()
     }
 
@@ -381,7 +418,14 @@ impl UiState {
         self.cleanup_input.clear();
         self.pending_cleanup = Some(PendingCleanup {
             action: CleanupAction::Purge,
-            phrase: format!("purge {}", entry.original.display()),
+            phrase: format!(
+                "purge {}",
+                entry
+                    .original
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| entry.original.display().to_string())
+            ),
             total: entry.size,
             plans: Vec::new(),
             entries: vec![entry],
@@ -642,6 +686,17 @@ impl UiState {
             return;
         }
 
+        if self.screen == Screen::CleanupResult {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc | KeyCode::Char(' ') => {
+                    self.cleanup_report = None;
+                    self.screen = Screen::Inventory;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // A cleanup confirmation owns every printable key, for the same reason.
         if self.screen == Screen::CleanupConfirm {
             match key.code {
@@ -722,6 +777,7 @@ impl UiState {
                 if self.screen != Screen::Cleanup {
                     self.cleanup_selected.clear();
                     self.cleanup_index = 0;
+                    self.measure_leftovers();
                     self.open(Screen::Cleanup);
                 }
             }

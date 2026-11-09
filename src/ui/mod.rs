@@ -45,18 +45,50 @@ pub fn draw(frame: &mut Frame, state: &UiState) {
 
     draw_header(frame, layout[0], state);
     match state.screen {
-        Screen::Inventory => draw_inventory(frame, layout[1], state),
-        Screen::Details => draw_details_screen(frame, layout[1], state),
-        Screen::Plan => draw_plan(frame, layout[1], state),
-        Screen::Cleanup => draw_cleanup(frame, layout[1], state),
-        Screen::CleanupConfirm => draw_cleanup_confirm(frame, layout[1], state),
-        Screen::Quarantine => draw_quarantine(frame, layout[1], state),
-        Screen::Result => draw_result(frame, layout[1], state),
-        Screen::History => draw_history(frame, layout[1], state),
-        Screen::Adapters => draw_adapters(frame, layout[1], state),
-        Screen::Help => draw_help(frame, layout[1]),
+        // A confirmation is a floating window over the screen it came from, so the list
+        // the user was reading stays visible behind it.
+        Screen::CleanupConfirm => {
+            draw_screen(frame, layout[1], state.previous_screen, state);
+            draw_cleanup_confirm(frame, layout[1], state);
+        }
+        Screen::CleanupResult => {
+            draw_screen(frame, layout[1], Screen::Inventory, state);
+            draw_cleanup_result(frame, layout[1], state);
+        }
+        other => draw_screen(frame, layout[1], other, state),
     }
     draw_footer(frame, layout[2], state);
+}
+
+fn draw_screen(frame: &mut Frame, area: Rect, screen: Screen, state: &UiState) {
+    match screen {
+        Screen::Inventory => draw_inventory(frame, area, state),
+        Screen::Details => draw_details_screen(frame, area, state),
+        Screen::Plan => draw_plan(frame, area, state),
+        Screen::Cleanup => draw_cleanup(frame, area, state),
+        Screen::Quarantine => draw_quarantine(frame, area, state),
+        Screen::Result => draw_result(frame, area, state),
+        Screen::History => draw_history(frame, area, state),
+        Screen::Adapters => draw_adapters(frame, area, state),
+        Screen::Help => draw_help(frame, area),
+        // The two modal screens are drawn on top of a background; if one of them ever
+        // reaches this point, show the inventory rather than nothing.
+        Screen::CleanupConfirm | Screen::CleanupResult => draw_inventory(frame, area, state),
+    }
+}
+
+/// A centred floating window: cleared area, then a bordered block with the content.
+fn modal_area(area: Rect, content_lines: usize) -> Rect {
+    let width = area.width.saturating_sub(6).clamp(24, 80);
+    let height = (content_lines as u16 + 4).clamp(5, area.height.max(5));
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, state: &UiState) {
@@ -148,6 +180,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &UiState) {
             " [space] select  [A] all  [N] none  [Enter] move to quarantine  [Esc] back "
         }
         (Screen::CleanupConfirm, false) => " [type] the phrase  [Enter] confirm  [Esc] cancel ",
+        (Screen::CleanupResult, false) => " [Enter] close ",
         (Screen::Quarantine, false) => " [↑↓] browse  [r] restore  [p] purge for good  [Esc] back ",
         (Screen::History, false) => " [↑↓] browse  [Esc] back  [i] inventory ",
         (Screen::Adapters, false) => " [i] inventory  [Esc] back  [?] help  [q] quit ",
@@ -753,11 +786,7 @@ fn draw_cleanup(frame: &mut Frame, area: Rect, state: &UiState) {
         } else {
             muted("[ ]")
         };
-        let size = component
-            .location
-            .as_ref()
-            .map(|path| format_size(crate::domain::path_size(path)))
-            .unwrap_or_else(|| UNAVAILABLE.to_string());
+        let size = format_size(state.size_of(component));
         let path = component
             .location
             .as_ref()
@@ -792,84 +821,163 @@ fn draw_cleanup(frame: &mut Frame, area: Rect, state: &UiState) {
 
 fn draw_cleanup_confirm(frame: &mut Frame, area: Rect, state: &UiState) {
     let Some(pending) = &state.pending_cleanup else {
+        let boxed = modal_area(area, 3);
+        frame.render_widget(Clear, boxed);
         frame.render_widget(
             Paragraph::new("No cleanup is being prepared.")
-                .block(Block::default().borders(Borders::ALL)),
-            area,
+                .block(Block::default().borders(Borders::ALL))
+                .wrap(Wrap { trim: true }),
+            boxed,
         );
         return;
     };
 
-    let (title, headline, explain) = match pending.action {
-        crate::app::CleanupAction::Quarantine => (
-            " MOVE TO QUARANTINE ",
+    let quarantine = pending.action == crate::app::CleanupAction::Quarantine;
+    let (title, headline, explain, accent_colour) = if quarantine {
+        (
+            " CONFIRM QUARANTINE ",
             format!(
-                "{} item(s), {} in total",
+                "{} item(s) will move, {} in total",
                 pending.plans.len(),
                 format_size(pending.total)
             ),
-            "Each item is moved into the quarantine area, not deleted. It can be restored \
-             from there, and the space is only freed when the entry is purged.",
-        ),
-        crate::app::CleanupAction::Purge => (
-            " PURGE QUARANTINE ",
-            format!("{} in total", format_size(pending.total)),
-            "This deletes the quarantined copy for good. There is no way back after this \
-             step.",
-        ),
+            "They are moved into the quarantine area and can be restored from there. \
+             Nothing is deleted yet.",
+            Color::Yellow,
+        )
+    } else {
+        (
+            " CONFIRM PURGE ",
+            format!("{} will be deleted for good", format_size(pending.total)),
+            "This removes the quarantined copy permanently. There is no way back after \
+             this step.",
+            Color::Red,
+        )
     };
 
-    let mut lines = vec![
-        Line::from(semantic(
-            if pending.action == crate::app::CleanupAction::Quarantine {
-                Color::Yellow
-            } else {
-                Color::Red
-            },
-            headline,
-        )),
-        Line::from(""),
-        Line::from(muted(explain)),
-        Line::from(""),
-    ];
-
+    let mut paths: Vec<Line> = Vec::new();
     for plan in &pending.plans {
         for target in &plan.plan.reclaim {
-            lines.push(Line::from(vec![
+            paths.push(Line::from(vec![
                 Span::raw("  "),
-                Span::raw(target.path.display().to_string()),
-                muted(format!("  ({})", format_size(target.size))),
-            ]));
-        }
-        for note in &plan.plan.unknown {
-            lines.push(Line::from(vec![
-                semantic(Color::Yellow, "  not determined: "),
-                muted(note.clone()),
+                Span::raw(
+                    target
+                        .path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| target.path.display().to_string()),
+                ),
+                muted(format!("   {}", format_size(target.size))),
             ]));
         }
     }
     for entry in &pending.entries {
-        lines.push(Line::from(vec![
+        paths.push(Line::from(vec![
             Span::raw("  "),
-            Span::raw(entry.original.display().to_string()),
-            muted(format!("  ({})", format_size(entry.size))),
+            Span::raw(
+                entry
+                    .original
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| entry.original.display().to_string()),
+            ),
+            muted(format!("   {}", format_size(entry.size))),
         ]));
     }
 
+    // The window must fit; say how many paths are hidden instead of quietly cutting.
+    let available = area.height.saturating_sub(12).max(2) as usize;
+    let hidden = paths.len().saturating_sub(available);
+    paths.truncate(available);
+    if hidden > 0 {
+        paths.push(Line::from(muted(format!("  … and {hidden} more"))));
+    }
+
+    let matches = pending.phrase == state.cleanup_input.trim();
+    let mut lines = vec![
+        Line::from(semantic(accent_colour, headline)),
+        Line::from(muted(explain)),
+        Line::from(""),
+    ];
+    lines.extend(paths);
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         bold("Type  "),
         accent(pending.phrase.clone()),
-        bold("  to confirm: "),
-        Span::styled(state.cleanup_input.clone(), Style::new().fg(Color::Yellow)),
+        bold("  and press Enter: "),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            state.cleanup_input.clone(),
+            Style::new().fg(accent_colour).add_modifier(Modifier::BOLD),
+        ),
         Span::styled("▏", Style::new().fg(Color::Cyan)),
     ]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(if matches {
+        semantic(
+            Color::Green,
+            "Enter now confirms. Esc cancels and changes nothing.",
+        )
+    } else {
+        muted("Enter stays disabled until the phrase matches exactly. Esc cancels.")
+    }));
 
+    let boxed = modal_area(area, lines.len());
+    frame.render_widget(Clear, boxed);
     frame.render_widget(
         Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title(title))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::new().fg(accent_colour))
+                    .title(Span::styled(
+                        title,
+                        Style::new().fg(accent_colour).add_modifier(Modifier::BOLD),
+                    )),
+            )
             .wrap(Wrap { trim: false }),
-        area,
+        boxed,
+    );
+}
+
+fn draw_cleanup_result(frame: &mut Frame, area: Rect, state: &UiState) {
+    let Some(report) = &state.cleanup_report else {
+        return;
+    };
+    let colour = if report.success {
+        Color::Green
+    } else {
+        Color::Yellow
+    };
+    let mut lines = vec![Line::from(semantic(
+        colour,
+        format!(
+            "{}{}",
+            if report.success { "✓ " } else { "! " },
+            report.headline
+        ),
+    ))];
+    lines.push(Line::from(""));
+    for line in &report.lines {
+        lines.push(Line::from(Span::raw(line.clone())));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(muted("Enter or Esc closes this window.")));
+
+    let boxed = modal_area(area, lines.len());
+    frame.render_widget(Clear, boxed);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::new().fg(colour))
+                    .title(" RESULT "),
+            )
+            .wrap(Wrap { trim: true }),
+        boxed,
     );
 }
 
@@ -1135,4 +1243,284 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{CleanupAction, CleanupReport, PendingCleanup, UiState};
+    use crate::application::InventorySnapshot;
+    use crate::domain::{
+        ComponentCapability, ComponentCategory, ComponentId, ComponentSource, ComponentStatus,
+        DetectionConfidence, DetectionMethod, Quarantined,
+    };
+    use crate::infrastructure::history::History;
+    use crate::infrastructure::system::SystemInfo;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Renders one frame and returns the screen as text, so a test can assert what a
+    /// human would actually see. This is the check that "there is no feedback" fails on.
+    fn render(state: &UiState, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| draw(frame, state)).expect("draw");
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    fn state() -> UiState {
+        let system = SystemInfo {
+            os_name: Some("Omarchy".to_string()),
+            os_id: Some("omarchy".to_string()),
+            version_id: Some("4.5.0".to_string()),
+            kernel: None,
+            is_arch_like: true,
+            is_omarchy: true,
+            euid: Some(1000),
+        };
+        let history = History::new(std::env::temp_dir().join("occ-ui-test/history.jsonl"));
+        UiState::new(system, false, Vec::new(), history)
+    }
+
+    fn leftover() -> Component {
+        Component {
+            id: ComponentId::new("omarchy", ".denon.audio.bak.1786584854"),
+            name: "denon.audio".to_string(),
+            version: None,
+            description: Some("leftover of an earlier plugin removal".to_string()),
+            category: ComponentCategory::Plugin,
+            source: ComponentSource::OmarchyPlugin { first_party: false },
+            status: ComponentStatus::Orphan,
+            confidence: DetectionConfidence::Low,
+            capabilities: vec![ComponentCapability::Inspect, ComponentCapability::Reclaim],
+            detection: DetectionMethod::scan("/tmp/plugins"),
+            installed_size: None,
+            location: Some(std::path::PathBuf::from(
+                "/tmp/plugins/.denon.audio.bak.1786584854",
+            )),
+            installed_at: None,
+            depends_on: Vec::new(),
+            required_by: Vec::new(),
+            extra: Vec::new(),
+        }
+    }
+
+    fn state_with_leftover() -> UiState {
+        let mut state = state();
+        state.snapshot = InventorySnapshot {
+            components: vec![leftover()],
+            statuses: Vec::new(),
+            failures: Vec::new(),
+            duplicates: Vec::new(),
+        };
+        state
+    }
+
+    #[test]
+    fn the_cleanup_screen_lists_the_leftovers_it_would_move() {
+        let mut state = state_with_leftover();
+        state.screen = Screen::Cleanup;
+
+        let screen = render(&state, 100, 24);
+        assert!(screen.contains("CLEANUP"), "no cleanup heading:\n{screen}");
+        assert!(
+            screen.contains("denon.audio"),
+            "the leftover is not shown:\n{screen}"
+        );
+        assert!(
+            screen.contains("[ ]"),
+            "the selection marker is missing:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn the_purge_confirmation_is_a_floating_window_that_asks_for_the_phrase() {
+        let mut state = state_with_leftover();
+        state.screen = Screen::Cleanup;
+        state.previous_screen = Screen::Cleanup;
+        let entry = Quarantined {
+            original: std::path::PathBuf::from("/tmp/plugins/.denon.audio.bak.1786584854"),
+            location: std::path::PathBuf::from("/tmp/state/quarantine/7/.denon.audio.bak"),
+            root: std::path::PathBuf::from("/tmp/plugins"),
+            size: 204_712,
+            stamp: 7,
+            moved_at_unix: 1_700_000_000,
+        };
+        state.pending_cleanup = Some(PendingCleanup {
+            action: CleanupAction::Purge,
+            plans: Vec::new(),
+            entries: vec![entry],
+            total: 204_712,
+            phrase: "purge /tmp/plugins/.denon.audio.bak.1786584854".to_string(),
+        });
+        state.screen = Screen::CleanupConfirm;
+
+        let screen = render(&state, 110, 30);
+        assert!(
+            screen.contains("CONFIRM PURGE"),
+            "no confirmation window:\n{screen}"
+        );
+        assert!(
+            screen.contains("deleted for good"),
+            "the consequence is not stated:\n{screen}"
+        );
+        assert!(
+            screen.contains(".denon.audio.bak.1786584854"),
+            "the path being purged is not shown:\n{screen}"
+        );
+        assert!(
+            screen.contains("purge /tmp/plugins"),
+            "the phrase to type is not shown:\n{screen}"
+        );
+        assert!(
+            screen.contains("Enter stays disabled"),
+            "the confirmation state is not explained:\n{screen}"
+        );
+        // The list behind it stays visible: it is a floating window, not a new page.
+        assert!(
+            screen.contains("CLEANUP"),
+            "the background screen disappeared:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn the_quarantine_confirmation_says_that_nothing_is_deleted_yet() {
+        let mut state = state_with_leftover();
+        state.previous_screen = Screen::Cleanup;
+        state.pending_cleanup = Some(PendingCleanup {
+            action: CleanupAction::Quarantine,
+            plans: Vec::new(),
+            entries: Vec::new(),
+            total: 0,
+            phrase: "quarantine 0".to_string(),
+        });
+        state.screen = Screen::CleanupConfirm;
+
+        let screen = render(&state, 110, 30);
+        assert!(
+            screen.contains("CONFIRM QUARANTINE"),
+            "no confirmation window:\n{screen}"
+        );
+        assert!(
+            screen.contains("can be restored"),
+            "reversibility is not stated:\n{screen}"
+        );
+        assert!(
+            screen.contains("quarantine 0"),
+            "the phrase is missing:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn typing_the_phrase_flips_the_window_to_reassure_the_user() {
+        let mut state = state_with_leftover();
+        state.previous_screen = Screen::Cleanup;
+        state.pending_cleanup = Some(PendingCleanup {
+            action: CleanupAction::Quarantine,
+            plans: Vec::new(),
+            entries: Vec::new(),
+            total: 0,
+            phrase: "quarantine 3".to_string(),
+        });
+        state.cleanup_input = "quarantine 3".to_string();
+        state.screen = Screen::CleanupConfirm;
+
+        let screen = render(&state, 110, 30);
+        assert!(
+            screen.contains("Enter now confirms"),
+            "no confirmation feedback:\n{screen}"
+        );
+        assert!(!screen.contains("Enter stays disabled"));
+    }
+
+    #[test]
+    fn the_result_window_reports_what_happened_with_the_numbers() {
+        let mut state = state_with_leftover();
+        state.cleanup_report = Some(CleanupReport {
+            success: true,
+            headline: "Moved into quarantine".to_string(),
+            lines: vec![
+                "3 item(s) · 1.4 MiB".to_string(),
+                "They are in the quarantine area with their original paths recorded".to_string(),
+            ],
+        });
+        state.screen = Screen::CleanupResult;
+
+        let screen = render(&state, 110, 30);
+        assert!(screen.contains("RESULT"), "no result window:\n{screen}");
+        assert!(
+            screen.contains("Moved into quarantine"),
+            "no headline:\n{screen}"
+        );
+        assert!(screen.contains("3 item(s)"), "no numbers:\n{screen}");
+        assert!(
+            screen.contains("Enter or Esc closes"),
+            "no way out is explained:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn the_list_shows_the_measured_size_of_each_leftover() {
+        let dir = std::env::temp_dir().join(format!("occ-ui-size-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(dir.join("data.bin"), vec![b'x'; 2048]).expect("file");
+
+        let mut state = state();
+        let mut component = leftover();
+        component.id = ComponentId::new("omarchy", ".measured.bak.1");
+        component.name = "measured".to_string();
+        component.location = Some(dir.clone());
+        state.snapshot = InventorySnapshot {
+            components: vec![component],
+            statuses: Vec::new(),
+            failures: Vec::new(),
+            duplicates: Vec::new(),
+        };
+        // The sizes are measured once, when the view opens: the draw loop reads them.
+        state.measure_leftovers();
+        state
+            .cleanup_selected
+            .insert(state.snapshot.components[0].id.clone());
+        state.screen = Screen::Cleanup;
+
+        let screen = render(&state, 100, 20);
+        assert!(
+            screen.contains("2.0 KiB"),
+            "the size is not shown:\n{screen}"
+        );
+        assert!(
+            screen.contains("selected 2.0 KiB"),
+            "the selected total is not shown:\n{screen}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_small_terminal_still_shows_the_phrase_and_the_warning() {
+        let mut state = state_with_leftover();
+        state.previous_screen = Screen::Cleanup;
+        state.pending_cleanup = Some(PendingCleanup {
+            action: CleanupAction::Quarantine,
+            plans: Vec::new(),
+            entries: Vec::new(),
+            total: 0,
+            phrase: "quarantine 2".to_string(),
+        });
+        state.screen = Screen::CleanupConfirm;
+
+        let screen = render(&state, 60, 16);
+        assert!(
+            screen.contains("quarantine 2"),
+            "the phrase vanished on a small screen:\n{screen}"
+        );
+    }
 }
