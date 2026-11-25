@@ -12,6 +12,9 @@ use ratatui::widgets::{
 
 use crate::app::{Focus, Screen, UiState};
 use crate::domain::{AdapterAvailability, Component, UNAVAILABLE, format_size, shown};
+// A single source for the directory list, so the preview cannot promise an origin the
+// resolver does not enforce.
+use crate::infrastructure::process::TRUSTED_PRIVILEGED_DIRS;
 
 const TITLE: &str = " OMARCHY CONTROL CENTER ";
 const SIDEBAR_WIDTH: u16 = 24;
@@ -587,7 +590,10 @@ fn draw_plan(frame: &mut Frame, area: Rect, state: &UiState) {
         )));
     }
     for command in &plan.commands {
-        let mut spans = vec![semantic(p.success, format!("  $ {}", command.display()))];
+        let mut spans = vec![semantic(
+            p.success,
+            format!("  $ {}", command.display_effective()),
+        )];
         if command.requires_root {
             spans.push(muted(p, "  [root]"));
         }
@@ -601,7 +607,24 @@ fn draw_plan(frame: &mut Frame, area: Rect, state: &UiState) {
         )]));
     }
 
-    if plan.requires_tty() {
+    if plan
+        .commands
+        .iter()
+        .any(|command| command.needs_interface_privileges())
+    {
+        // The preview shows `sudo -- <program> <args>`: a bare program name, not a path.
+        // Say where both halves come from, because a search path can choose neither.
+        lines.push(Line::from(vec![muted(
+            p,
+            format!(
+                "  sudo and the privileged program are taken from {} and never from \
+                 --extra-search-path.",
+                TRUSTED_PRIVILEGED_DIRS.join(", ")
+            ),
+        )]));
+    }
+
+    if plan.requires_handover() {
         lines.push(Line::from(vec![muted(
             p,
             "  The terminal is handed to this command while it runs, so a privilege prompt \

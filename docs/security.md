@@ -24,6 +24,20 @@ a later task, and every claim below maps to code and to an automated test.
 * A privileged operation (a system removal) suspends the interface, releases the terminal,
   and hands the TTY to `sudo` for **exactly the confirmed argv**. The command owns the
   terminal while it runs; the interface repaints fully afterwards.
+* The decision is per command, not global: a command whose plan carries `requires_root`
+  runs as `sudo -- <program> <argv verbatim>`; every other command runs with the
+  interface's own identity and no prompt. A command marked as asking for privileges itself
+  (the `yay`/`paru` helper, which prompts for `pacman`) is **never** wrapped in `sudo`:
+  handing a package helper root is not the same as letting it ask.
+* Both `sudo` and the program a privileged command elevates resolve from the system
+  directories `/usr/bin`, `/bin`, `/usr/sbin` and `/sbin`, in that order, and from
+  nowhere else — never from `PATH`, never from a directory added with
+  `--extra-search-path` or `extra_search_paths`. Those directories are writable by the
+  user running the interface, so a privileged command resolved there would let that user
+  choose what root executes. A privileged program the system directories do not provide
+  is **refused** instead of being elevated, and a missing `sudo` is reported as not found
+  rather than quietly running unprivileged and reporting the package manager's refusal.
+  Unprivileged commands still resolve through the search path, as before.
 * The program never prompts for, reads, stores or forwards a password. It does not set
   `SUDO_ASKPASS`, does not read environment variables from the command, and does not
   reuse credentials between operations.
@@ -41,7 +55,8 @@ All process execution lives in `src/infrastructure/process.rs`. It enforces:
 * **Program names are bare names.** A name containing `/` or a NUL byte is rejected
   (`InvalidProgram`), so a name cannot choose its own executable. Resolution walks
   `PATH` and **ignores empty and relative entries**, which a directory-local binary would
-  otherwise exploit.
+  otherwise exploit. A privileged command is the exception: it resolves only from the
+  fixed system directories listed under [Privilege](#privilege).
 * **Every command has a deadline.** A captured command is killed when its deadline
   expires and reported as `Timeout`; the caller never waits forever. Interactive commands
   (the `sudo` handoff) have no deadline because a human is typing, and they own the

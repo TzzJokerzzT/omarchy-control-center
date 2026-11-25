@@ -614,6 +614,7 @@ impl ComponentAdapter for OmarchyPluginAdapter {
                 // The plugin lives in the user's configuration directory.
                 requires_root: false,
                 requires_tty: false,
+                self_elevating: false,
                 rationale: "ask Omarchy's own manager to remove the plugin and its directory"
                     .to_string(),
             }],
@@ -666,11 +667,10 @@ impl ComponentAdapter for OmarchyPluginAdapter {
                     reason: "this adapter only runs the omarchy command".to_string(),
                 });
             }
-            command_display = command.display();
-            let spec = CommandSpec::capture(command.program.clone(), command.args.clone())
-                .with_timeout(LIST_TIMEOUT);
+            command_display = command.display_effective();
+            let spec = CommandSpec::planned(command).with_captured_timeout(LIST_TIMEOUT);
             let output = self.runner.run(&spec).map_err(|error| {
-                AdapterError::command("execute", command.display(), error.to_string())
+                AdapterError::command("execute", command.display_effective(), error.to_string())
             })?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -1052,6 +1052,7 @@ mod tests {
                 args: vec!["-rf".to_string(), "/".to_string()],
                 requires_root: false,
                 requires_tty: false,
+                self_elevating: false,
                 rationale: "tampered".to_string(),
             }],
             reclaim: Vec::new(),

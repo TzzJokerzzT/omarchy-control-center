@@ -745,7 +745,9 @@ impl UiState {
             }
         }
 
-        let handover = pending.plan.requires_tty();
+        // A privileged command owns the terminal just as an interactive one does: sudo
+        // writes its password prompt there, and the interface must not repaint over it.
+        let handover = pending.plan.requires_handover();
         if handover {
             // The command owns the terminal while it runs, so a privilege prompt
             // works normally and we never read a password ourselves.

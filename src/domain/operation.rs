@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::ComponentId;
 
+/// The program a privileged command is wrapped in. The interface never runs as
+/// root itself: it hands exactly one confirmed argv to `sudo`.
+pub const SUDO: &str = "sudo";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
@@ -51,10 +55,24 @@ pub struct PlannedCommand {
     pub requires_root: bool,
     /// Needs the controlling terminal (privilege prompt or interactive output).
     pub requires_tty: bool,
+    /// The command asks for privileges itself: a package helper with its own `sudo`
+    /// prompt, or a tool that goes through polkit. Wrapping such a command in `sudo`
+    /// would hand a build helper root instead of letting it ask, so the interface only
+    /// elevates a command that cannot elevate itself.
+    ///
+    /// An in-memory decision only: exporting it would change the plan JSON every
+    /// `--print-plan` consumer already parses, so it is never serialized.
+    #[serde(skip)]
+    pub self_elevating: bool,
     pub rationale: String,
 }
 
 impl PlannedCommand {
+    /// True when the interface must obtain root on the command's behalf.
+    pub fn needs_interface_privileges(&self) -> bool {
+        self.requires_root && !self.self_elevating
+    }
+
     /// Display-only rendering. Never executed: the executor uses `program` and
     /// `args` verbatim, one `execve` per command.
     pub fn display(&self) -> String {
@@ -64,6 +82,17 @@ impl PlannedCommand {
             out.push_str(arg);
         }
         out
+    }
+
+    /// What actually runs. The interface never runs as root, so a privileged
+    /// command is invoked through `sudo --`, and the preview must say so instead of
+    /// promising an argv the machine would refuse.
+    pub fn display_effective(&self) -> String {
+        if self.needs_interface_privileges() {
+            format!("{SUDO} -- {}", self.display())
+        } else {
+            self.display()
+        }
     }
 }
 
@@ -103,8 +132,13 @@ impl OperationPlan {
         self.reclaim.iter().map(|target| target.size).sum()
     }
 
-    pub fn requires_tty(&self) -> bool {
-        self.commands.iter().any(|command| command.requires_tty)
+    /// True when the terminal must be handed back before the first command runs:
+    /// either a command is interactive or it asks `sudo` for privileges, and either
+    /// way the interface must stop drawing over it.
+    pub fn requires_handover(&self) -> bool {
+        self.commands
+            .iter()
+            .any(|command| command.requires_tty || command.requires_root)
     }
 
     /// Exact phrase the human must type to confirm: the native identifier, never
@@ -178,6 +212,7 @@ mod tests {
             args: args.iter().map(|arg| (*arg).to_string()).collect(),
             requires_root: true,
             requires_tty: true,
+            self_elevating: false,
             rationale: "remove the package".to_string(),
         }
     }
@@ -203,6 +238,72 @@ mod tests {
         let command = command(&["-R", "btop"]);
         assert_eq!(command.display(), "pacman -R btop");
         assert_eq!(command.args, vec!["-R".to_string(), "btop".to_string()]);
+    }
+
+    #[test]
+    fn a_privileged_command_displays_the_sudo_prefix_that_will_run() {
+        let command = command(&["-R", "btop"]);
+        assert_eq!(command.display_effective(), "sudo -- pacman -R btop");
+    }
+
+    #[test]
+    fn a_command_that_asks_for_itself_is_never_wrapped_in_sudo() {
+        // yay removes through pacman but prompts for the password itself; running it
+        // under sudo would hand the helper root instead of letting it ask.
+        let mut helper = command(&["-R", "some-aur-pkg"]);
+        helper.self_elevating = true;
+        assert!(helper.requires_root);
+        assert!(!helper.needs_interface_privileges());
+        assert_eq!(helper.display_effective(), "pacman -R some-aur-pkg");
+    }
+
+    #[test]
+    fn an_unprivileged_command_displays_its_own_argv() {
+        let mut command = command(&["uninstall", "org.x.Y"]);
+        command.requires_root = false;
+        assert_eq!(command.display_effective(), "pacman uninstall org.x.Y");
+    }
+
+    #[test]
+    fn the_elevation_flag_is_kept_in_memory_and_never_exported() {
+        // The flag decides how the command runs, so it must survive in memory...
+        let mut helper = command(&["-R", "some-aur-pkg"]);
+        helper.self_elevating = true;
+        assert!(!helper.needs_interface_privileges());
+        assert_eq!(helper.display_effective(), "pacman -R some-aur-pkg");
+
+        // ...but the exported plan shape stays exactly what it was before the field existed.
+        let json = serde_json::to_value(&helper).expect("serialize");
+        let object = json.as_object().expect("an object");
+        assert!(
+            object.get("self_elevating").is_none(),
+            "the flag must not reach the plan export: {json}"
+        );
+        assert_eq!(object.len(), 5, "unexpected plan shape: {json}");
+
+        // A plan written before the field existed still loads, defaulting to "elevate".
+        let legacy = serde_json::json!({
+            "program": "pacman",
+            "args": ["-R", "btop"],
+            "requires_root": true,
+            "requires_tty": true,
+            "rationale": "remove the package",
+        });
+        let restored: PlannedCommand = serde_json::from_value(legacy).expect("deserialize");
+        assert!(!restored.self_elevating);
+        assert!(restored.needs_interface_privileges());
+    }
+
+    #[test]
+    fn a_root_command_needs_the_terminal_handover_even_without_a_tty_prompt() {
+        let mut root_without_tty = plan(Vec::new(), Vec::new());
+        root_without_tty.commands[0].requires_tty = false;
+        assert!(root_without_tty.requires_handover());
+
+        let mut plain = plan(Vec::new(), Vec::new());
+        plain.commands[0].requires_root = false;
+        plain.commands[0].requires_tty = false;
+        assert!(!plain.requires_handover());
     }
 
     #[test]

@@ -226,6 +226,7 @@ impl ComponentAdapter for CargoToolsAdapter {
                 // A cargo install writes inside the user's own Cargo home.
                 requires_root: false,
                 requires_tty: false,
+                self_elevating: false,
                 rationale: "remove this crate and the binaries cargo recorded for it".to_string(),
             }],
             reclaim: Vec::new(),
@@ -281,15 +282,10 @@ impl ComponentAdapter for CargoToolsAdapter {
                     reason: "this adapter only runs cargo".to_string(),
                 });
             }
-            command_display = command.display();
-            let spec = if command.requires_tty {
-                CommandSpec::interactive(command.program.clone(), command.args.clone())
-            } else {
-                CommandSpec::capture(command.program.clone(), command.args.clone())
-                    .with_timeout(TIMEOUT)
-            };
+            command_display = command.display_effective();
+            let spec = CommandSpec::planned(command).with_captured_timeout(TIMEOUT);
             let output = self.runner.run(&spec).map_err(|error| {
-                AdapterError::command("execute", command.display(), error.to_string())
+                AdapterError::command("execute", command.display_effective(), error.to_string())
             })?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);

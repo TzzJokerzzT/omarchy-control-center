@@ -14,6 +14,7 @@ pub use component::{
 };
 pub use error::AdapterError;
 pub use operation::{
-    OperationKind, OperationOutcome, OperationPlan, OperationRequest, PlannedCommand, tail_text,
+    OperationKind, OperationOutcome, OperationPlan, OperationRequest, PlannedCommand, SUDO,
+    tail_text,
 };
 pub use reclaim::{Quarantined, ReclaimError, ReclaimTarget, path_size};

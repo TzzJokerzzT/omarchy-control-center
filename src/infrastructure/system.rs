@@ -115,6 +115,13 @@ impl OsRelease {
     }
 }
 
+/// The effective uid of this process, read from `/proc/self/status`.
+pub fn current_euid() -> Option<u32> {
+    std::fs::read_to_string(PROC_STATUS)
+        .ok()
+        .and_then(|status| effective_uid(&status))
+}
+
 /// Reads the effective uid out of `/proc/self/status`.
 pub fn effective_uid(status: &str) -> Option<u32> {
     for line in status.lines() {

@@ -462,6 +462,7 @@ impl ComponentAdapter for FlatpakAdapter {
                 args,
                 requires_root: scope == InstallScope::System,
                 requires_tty: false,
+                self_elevating: false,
                 rationale: format!(
                     "{} this reference in the {} installation; flatpak owns its store",
                     request.kind.label(),
@@ -505,14 +506,10 @@ impl ComponentAdapter for FlatpakAdapter {
                     reason: "this adapter only runs flatpak".to_string(),
                 });
             }
-            command_display = command.display();
-            let spec = if command.requires_tty {
-                CommandSpec::interactive(command.program.clone(), command.args.clone())
-            } else {
-                CommandSpec::capture(command.program.clone(), command.args.clone())
-            };
+            command_display = command.display_effective();
+            let spec = CommandSpec::planned(command);
             let output = self.runner.run(&spec).map_err(|error| {
-                AdapterError::command("execute", command.display(), error.to_string())
+                AdapterError::command("execute", command.display_effective(), error.to_string())
             })?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -941,6 +938,7 @@ mod tests {
                 ],
                 requires_root: false,
                 requires_tty: false,
+                self_elevating: false,
                 rationale: "remove".to_string(),
             }],
             reclaim: Vec::new(),

@@ -356,6 +356,7 @@ impl ComponentAdapter for AurAdapter {
                 args: vec!["-R".to_string(), name.clone()],
                 requires_root: true,
                 requires_tty: true,
+                self_elevating: true,
                 rationale: format!(
                     "remove this package through {} , the helper that owns its AUR build record",
                     helper.program
@@ -407,14 +408,10 @@ impl ComponentAdapter for AurAdapter {
                     reason: "this adapter only runs a detected AUR helper".to_string(),
                 });
             }
-            command_display = command.display();
-            let spec = if command.requires_tty {
-                CommandSpec::interactive(command.program.clone(), command.args.clone())
-            } else {
-                CommandSpec::capture(command.program.clone(), command.args.clone())
-            };
+            command_display = command.display_effective();
+            let spec = CommandSpec::planned(command);
             let output = self.runner.run(&spec).map_err(|error| {
-                AdapterError::command("execute", command.display(), error.to_string())
+                AdapterError::command("execute", command.display_effective(), error.to_string())
             })?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -677,6 +674,7 @@ mod tests {
                 args: vec!["-c".to_string(), "rm -rf /".to_string()],
                 requires_root: true,
                 requires_tty: true,
+                self_elevating: true,
                 rationale: "tampered".to_string(),
             }],
             reclaim: Vec::new(),
