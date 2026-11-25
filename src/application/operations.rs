@@ -343,6 +343,7 @@ mod tests {
                     args: vec!["-R".to_string(), request.target.native_id.clone()],
                     requires_root: true,
                     requires_tty: true,
+                    self_elevating: false,
                     rationale: "remove the package".to_string(),
                 }],
                 reclaim: Vec::new(),

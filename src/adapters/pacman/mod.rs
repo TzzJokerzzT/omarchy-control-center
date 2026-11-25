@@ -426,6 +426,7 @@ impl ComponentAdapter for PacmanAdapter {
                 args: vec!["-R".to_string(), name.clone()],
                 requires_root: true,
                 requires_tty: true,
+                self_elevating: false,
                 rationale: "remove this package and its files, keeping its dependencies installed"
                     .to_string(),
             }],
@@ -474,14 +475,10 @@ impl ComponentAdapter for PacmanAdapter {
                     reason: "this adapter only runs pacman".to_string(),
                 });
             }
-            command_display = command.display();
-            let spec = if command.requires_tty {
-                CommandSpec::interactive(command.program.clone(), command.args.clone())
-            } else {
-                CommandSpec::capture(command.program.clone(), command.args.clone())
-            };
+            command_display = command.display_effective();
+            let spec = CommandSpec::planned(command);
             let output = self.runner.run(&spec).map_err(|error| {
-                AdapterError::command("execute", command.display(), error.to_string())
+                AdapterError::command("execute", command.display_effective(), error.to_string())
             })?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -1054,6 +1051,7 @@ mod removal_tests {
                 args: vec!["-R".to_string(), "btop".to_string()],
                 requires_root: true,
                 requires_tty: false,
+                self_elevating: false,
                 rationale: "remove".to_string(),
             }],
             reclaim: Vec::new(),
@@ -1088,6 +1086,7 @@ mod removal_tests {
                 args: vec!["-R".to_string(), "btop".to_string()],
                 requires_root: true,
                 requires_tty: false,
+                self_elevating: false,
                 rationale: "remove".to_string(),
             }],
             reclaim: Vec::new(),
@@ -1118,6 +1117,7 @@ mod removal_tests {
                 args: vec!["-rf".to_string(), "/".to_string()],
                 requires_root: true,
                 requires_tty: true,
+                self_elevating: false,
                 rationale: "tampered".to_string(),
             }],
             reclaim: Vec::new(),
@@ -1149,6 +1149,7 @@ mod removal_tests {
                 args: vec!["-R".to_string(), "btop".to_string()],
                 requires_root: true,
                 requires_tty: true,
+                self_elevating: false,
                 rationale: "remove".to_string(),
             }],
             reclaim: Vec::new(),
