@@ -3,6 +3,11 @@
 # clone and after recreating the repository, because the rules live on GitHub, not in the
 # repository itself.
 #
+# A pull request is still required: a present `required_pull_request_reviews` with an
+# approval count of zero switches that requirement on, and it is the only thing that stops a
+# direct push — required status checks gate merges, never pushes. `enforce_admins` binds the
+# owner to the same rules, and no approval is asked because GitHub forbids self-approval.
+#
 # Usage:
 #   scripts/protect-main.sh                 # base rules, keeping any required CI checks
 #   scripts/protect-main.sh --require-ci    # base rules plus the `ci` check, required
@@ -36,7 +41,7 @@ say "branch    : $BRANCH"
 # A code-owner rule without a resolvable owner blocks every pull request permanently,
 # so the prerequisites are checked before anything is applied.
 gh api "repos/$REPO/contents/.github/CODEOWNERS" >/dev/null 2>&1 ||
-  die ".github/CODEOWNERS is missing: a code-owner requirement would block every pull request"
+  die ".github/CODEOWNERS is missing: nobody would be requested for review on a pull request"
 say "CODEOWNERS: present"
 
 errors="$(gh api "repos/$REPO/codeowners/errors" --jq '.errors | length')"
@@ -76,13 +81,15 @@ if os.environ["REQUIRE_CI"] == "1" and "ci" not in contexts:
     contexts.append("ci")
 
 payload = {
-    # enforce_admins stays false on purpose: with true, the owner could neither push
-    # directly nor merge their own pull requests, because GitHub forbids self-approval.
-    "enforce_admins": False,
+    # A pull request stays required. A present `required_pull_request_reviews` is what turns
+    # GitHub's "Require a pull request before merging" on, and a count of zero asks for no
+    # approval: GitHub forbids approving your own pull request, so a count of one would
+    # freeze a single maintainer forever. `enforce_admins` binds the owner to the same rules.
+    "enforce_admins": True,
     "required_pull_request_reviews": {
         "dismiss_stale_reviews": True,
-        "require_code_owner_reviews": True,
-        "required_approving_review_count": 1,
+        "require_code_owner_reviews": False,
+        "required_approving_review_count": 0,
         "require_last_push_approval": False,
     },
     "required_status_checks": {"strict": True, "contexts": contexts} if contexts else None,
@@ -113,15 +120,21 @@ gh api "repos/$REPO/branches/$BRANCH/protection" |
   python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-r = d.get("required_pull_request_reviews") or {}
+reviews = d.get("required_pull_request_reviews")
 checks = d.get("required_status_checks") or {}
-print("  pull request required       : yes")
-print("  approvals required          :", r.get("required_approving_review_count"))
-print("  code owner approval         :", r.get("require_code_owner_reviews"))
-print("  dismiss stale approvals     :", r.get("dismiss_stale_reviews"))
+contexts = checks.get("contexts") or []
+# A present `required_pull_request_reviews` is what turns "Require a pull request before
+# merging" on, and that is the only thing that stops a direct push; a required check gates
+# the merge of a pull request somebody already opened.
+gate = reviews is not None
+print("  pull request required       :", "yes" if gate else "NO")
+print("  required CI checks          :", contexts or "none")
+print("  required approvals          :", (reviews or {}).get("required_approving_review_count", "none"))
 print("  owner also restricted       :", d["enforce_admins"]["enabled"])
 print("  force pushes allowed        :", d["allow_force_pushes"]["enabled"])
 print("  deleting the branch allowed :", d["allow_deletions"]["enabled"])
-print("  required CI checks          :", checks.get("contexts") or "none")
 print("  branch must be up to date   :", checks.get("strict", "-"))
+if not gate:
+    sys.stderr.write("error: the applied rule does not require a pull request\n")
+    sys.exit(1)
 '
