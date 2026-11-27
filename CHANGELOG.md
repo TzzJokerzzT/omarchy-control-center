@@ -4,6 +4,49 @@ Every notable change, grouped by kind. This project follows [Semantic
 Versioning](https://semver.org/): the version lives in `Cargo.toml`, the tag is `vX.Y.Z`,
 and the rules for bumping it are in [`docs/versioning.md`](docs/versioning.md).
 
+## [Unreleased]
+
+### Added
+
+- **Privileged removal asks for the root password**: a removal whose plan needs root now runs
+  as `sudo -- <program> <argv verbatim>`. The terminal is handed to `sudo` for exactly the
+  confirmed command, so the prompt is visible; the interface still refuses to run as root and
+  never prompts for, reads or stores a password. A helper that asks for itself (`yay`,
+  `paru`) is never wrapped in `sudo`, because handing a build helper root is not the same as
+  letting it ask.
+- The preview and the operation history show the argv that actually runs, `sudo -- …`
+  included, instead of a command the machine would refuse.
+- The README carries a command line reference, and the updates section describes what
+  `--check-update` and `--update` really do.
+
+### Changed
+
+- A privileged program, and `sudo` itself, resolve only from `/usr/bin`, `/bin`, `/usr/sbin`
+  and `/sbin`, in that order, and from nowhere else — never from `PATH`, and never from a
+  directory added with `--extra-search-path`, which the user running the interface can write
+  to. A privileged program the system directories do not provide is **refused** instead of
+  being elevated, and a missing `sudo` is reported as not found rather than quietly running
+  the command unprivileged. Unprivileged commands still resolve through the search path, as
+  before.
+- `--print-plan` JSON is unchanged: whether a command elevates is decided in memory and is
+  never serialized.
+- `main` is protected by the pipeline rather than by an approval. A pull request needs a
+  green `ci` run, a branch up to date with `main` and every conversation resolved, and
+  `enforce_admins` makes the same rules bind the maintainer. GitHub forbids approving your
+  own pull request, so with one maintainer a required approval would freeze every change of
+  theirs; `CODEOWNERS` still requests the maintainer as reviewer on every pull request.
+- `protect-main.sh` keeps a pull request required — `required_pull_request_reviews` with a
+  count of zero, which is what refuses a direct push — and refuses to report success when the
+  applied rule would not require one.
+- Actions in the workflows are pinned by commit SHA, with `dependabot.yml` keeping the pins
+  fresh.
+
+### Fixed
+
+- A privileged removal (`pacman -R`, an AUR removal, a system flatpak) no longer runs
+  unprivileged and reports the package manager's refusal: the plan already marked those
+  commands as needing root, but nothing acted on the mark.
+
 ## [0.3.0] — update checks, verified updates and release workflow
 
 ### Added
