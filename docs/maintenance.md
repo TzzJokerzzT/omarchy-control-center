@@ -40,31 +40,31 @@ scripts/protect-main.sh --require-ci  # the base rules plus the CI check, but on
                                       # has already reported a green run
 ```
 
-`protect-main.sh` refuses to run when `.github/CODEOWNERS` is missing or has errors: a
-code-owner requirement without a resolvable owner blocks every pull request permanently,
-which is worse than no protection at all. It also refuses `--require-ci` until the `ci`
-check has succeeded once, because a required check that never reports blocks every pull
-request forever — and it preserves existing required checks when run without the flag, so
-re-running it can never silently drop a CI requirement.
+`protect-main.sh` refuses to run when `.github/CODEOWNERS` is missing or has errors: without
+a resolvable owner nobody is requested for review, and that file is what keeps the maintainer
+in the loop now that the gate is the pipeline rather than an approval. It also refuses
+`--require-ci` until the `ci` check has succeeded once, because a required check that never
+reports blocks every pull request forever — and it preserves existing required checks when run
+without the flag, so re-running it can never silently drop a CI requirement.
 
 ## What the rules are, and why
 
 | Rule | Why |
 | --- | --- |
 | Pull requests open to collaborators only | a stranger cannot open a pull request, so a contribution arrives as an issue with a diff |
-| Pull request required | nobody pushes to `main` directly, so every change is reviewable |
-| One approval, from the code owner | only the maintainer approves; a collaborator cannot approve their own pull request |
-| Dismiss stale approvals | a changed pull request is reviewed again |
+| Pull request required | `required_pull_request_reviews` present with a count of zero: that setting is what refuses a direct push, and required status checks alone do not |
+| No required human approval | the review count is zero, because GitHub forbids approving your own pull request and one maintainer would otherwise be frozen out |
+| `CODEOWNERS` requests the maintainer | every pull request, a collaborator's included, arrives with a review request; it is a nudge, not a gate |
 | Resolve conversations first | a review comment cannot be ignored by merging |
 | No force push, no deleting `main` | the history of a distributed program stays intact |
 | The `ci` check is required, with a strict branch | a pull request cannot be merged with a failing build or on top of an outdated `main` |
-| Owner **not** restricted | with `enforce_admins`, the owner could neither push nor merge their own PRs, because GitHub forbids approving your own |
+| Owner **restricted** | `enforce_admins` makes the pipeline bind the maintainer too, so a red build cannot be merged past |
 
 Pull requests can only be **opened by collaborators** (`pull_request_creation_policy:
 collaborators_only`), so an outside contributor cannot open one even with a fork: the flow is
 an issue with the patch attached, which `CONTRIBUTING.md` describes. Inviting someone with the
-**Write** role also lets them merge an already-approved pull request, so invite with **Read** if
-you only want them to review.
+**Write** role also lets them open pull requests against `main` and merge them once the pipeline
+is green, so invite with **Read** if you only want them to review.
 
 That policy is **not** applied by `scripts/protect-main.sh`, which only writes
 `/branches/{branch}/protection`. A repository recreated from this source would come back with

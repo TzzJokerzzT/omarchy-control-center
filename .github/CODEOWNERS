@@ -1,6 +1,6 @@
 # Every file in this repository is owned by the maintainer.
 #
-# With "Require review from Code Owners" enabled on `main`, a pull request cannot be
-# merged until @TzzJokerzzT approves it. Contributors do not need write access: they fork,
-# open a pull request, and the maintainer reviews, approves and merges.
+# This requests @TzzJokerzzT as a reviewer on every pull request, including the ones other
+# collaborators open. It does not block a merge: the required gate is `ci`, because GitHub
+# forbids approving your own pull request and this repository has one human maintainer.
 * @TzzJokerzzT
