@@ -26,9 +26,12 @@ If you are a collaborator, open the pull request against `main` and expect it to
 **squashed** on merge: the pull request title becomes the commit subject, so write it like a
 commit (`feat(adapters): …`).
 
-Either way, `main` is protected. It needs one approval, a CODEOWNERS review from the
-maintainer, and a green `ci` run before it can merge; force pushes and branch deletion are
-blocked, so nothing lands by going around it.
+Either way, `main` is protected. A pull request needs a green `ci` run, a branch up to date
+with `main` and every conversation resolved; force pushes and branch deletion are blocked.
+There is **no required human approval**, because GitHub forbids approving your own pull
+request and this repository has one maintainer: a required approval would freeze the
+maintainer's own changes forever. `CODEOWNERS` still requests the maintainer as reviewer on
+every pull request, so a review can happen — it just is not the gate.
 
 Run the checks locally first — they are the same ones `ci` runs:
 

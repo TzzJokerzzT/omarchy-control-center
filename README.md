@@ -439,9 +439,11 @@ or configuration content.
 
 ## Contributing
 
-`main` is protected: it needs one approval, a CODEOWNERS review and a green `ci` run, and
-pull requests can only be opened by collaborators. If you have a fix and you are not one, open
-an issue with the patch attached. Issues are open to everyone. See
+`main` is protected: a pull request needs a green `ci` run, a branch up to date with `main`
+and every conversation resolved, and the rules bind the owner too. There is no required human
+approval, because GitHub forbids approving your own pull request and this repository has one
+maintainer. Pull requests can only be opened by collaborators. If you have a fix and you are
+not one, open an issue with the patch attached. Issues are open to everyone. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the flow and the rules a change must respect.
 
 ## Development
